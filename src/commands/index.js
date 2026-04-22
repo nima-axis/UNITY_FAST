@@ -148,7 +148,7 @@ const authStateSchema = new mongoose.Schema({
 // ALL auto features default OFF
 const botConfigSchema = new mongoose.Schema({
   _id:         { type: String, default: 'config' },
-  mode:        { type: String, default: 'public' },
+  mode:        { type: String, default: 'inbox' },
   prefix:      String,
   lang:        { type: String, default: 'en' },
   langSet:     { type: Boolean, default: false },

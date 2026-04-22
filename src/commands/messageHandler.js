@@ -156,7 +156,7 @@ async function checkMode(m) {
     // The old getBotMode() was a shared module-level variable that caused
     // one user's .privatemode to affect ALL other sessions.
     const botCfg = await db.getBotConfig(m.sessionOwner);
-    const mode = botCfg?.mode || 'public';
+    const mode = botCfg?.mode || 'inbox';
     if (m.isOwner || m.isPaired) return true;
     switch (mode) {
       case 'public':  return true;
@@ -361,35 +361,43 @@ async function handleMessage(sock, msg) {
     }
     if (user.isMuted && !m.isOwner) return;
 
-    // ── Language gate — block ALL commands until lang confirmed this runtime ──
+    // ── Language gate — block ALL commands until lang is set in DB ──────────
+    // On restart: auto-unlock from DB (no re-selection needed if already set)
     const LANG_BYPASS = new Set(['setlang', 'language', 'lang', '_setlang', '__setlang']);
     if (!LANG_BYPASS.has(m.command) && !langConfirmed.has(m.sessionOwner)) {
-      if (m.isOwner) {
-        try {
-          const botCfg = await db.getBotConfig(m.sessionOwner);
-          const lastLang = botCfg?.lang || 'en';
-          const langNames = { en: 'English 🇬🇧', si: 'Sinhala 🇱🇰', ta: 'Tamil 🇮🇳' };
-          await sendButtons(sock, m.chat, {
-            text:
-              `🔄 *Bot restarted — please confirm language*\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `Last used: *${langNames[lastLang] || lastLang}*\n\n` +
-              `${t('lang_choose', 'en')}\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━\n${cfg.footer}`,
-            footer: cfg.footer,
-            buttons: [
-              { label: '🇬🇧 English', id: '.lang en' },
-              { label: '🇱🇰 සිංහල',  id: '.lang si' },
-              { label: '🇮🇳 தமிழ்',   id: '.lang ta' },
-            ],
-          });
-        } catch {
-          await m.reply(`⚠️ Please set language first: *.lang en* / *.lang si* / *.lang ta*\n\n${cfg.footer}`);
+      try {
+        const botCfg = await db.getBotConfig(m.sessionOwner);
+        if (botCfg.langSet) {
+          // Language already set in DB — auto-confirm, no need to re-select
+          langConfirmed.add(m.sessionOwner);
+          setLangCache(botCfg.lang || 'en', m.sessionOwner);
+          // fall through and continue handling the command
+        } else {
+          // First time — language not set yet, prompt owner
+          if (m.isOwner) {
+            const langNames = { en: 'English 🇬🇧', si: 'Sinhala 🇱🇰', ta: 'Tamil 🇮🇳' };
+            await sendButtons(sock, m.chat, {
+              text:
+                `🌐 *Select Bot Language*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `${t('lang_choose', 'en')}\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━\n${cfg.footer}`,
+              footer: cfg.footer,
+              buttons: [
+                { label: '🇬🇧 English', id: '.lang en' },
+                { label: '🇱🇰 සිංහල',  id: '.lang si' },
+                { label: '🇮🇳 தமிழ்',   id: '.lang ta' },
+              ],
+            });
+          } else {
+            await m.reply(`${t('lang_not_set', 'en')}\n\n${cfg.footer}`);
+          }
+          return;
         }
-      } else {
-        await m.reply(`${t('lang_not_set', 'en')}\n\n${cfg.footer}`);
+      } catch {
+        await m.reply(`⚠️ Please set language first: *.lang en* / *.lang si* / *.lang ta*\n\n${cfg.footer}`);
+        return;
       }
-      return;
     }
 
     if (cfg.features.rateLimit && !m.isOwner) {

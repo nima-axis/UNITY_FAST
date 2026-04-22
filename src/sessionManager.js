@@ -459,7 +459,7 @@ async function startSession(userId, onUpdate) {
               // ── STEP 4: Language select (first time only) ───────────
               try {
                 const db = require('./commands/index');
-                const botCfg = await db.getBotConfig();
+                const botCfg = await db.getBotConfig(userId);
                 if (!botCfg.langSet) {
                   // Send language select to bot's own number (owner)
                   await new Promise(r => setTimeout(r, 3000));

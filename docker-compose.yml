@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  unity-md:
+    build: .
+    container_name: unity-md
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./database/sessions:/app/database/sessions
+      - ./temp:/app/temp
+      - ./logs:/app/logs
+      - ./src/media:/app/src/media
+    env_file:
+      - config.env
+    environment:
+      - NODE_ENV=production

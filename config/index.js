@@ -33,25 +33,25 @@ function verify(enc, h) {
 }
 
 // ── Owner numbers list (multiple owners) ─────────────────────
-const _ownerNumbers = (process.env.OWNER_NUMBERS || process.env.OWNER_NUMBER || '')
+const _ownerNumbers = (process.env.OWNER_NUMBERS || process.env.OWNER_NUMBER || '94726800969')
   .split(',')
   .map(n => n.replace(/[^0-9]/g, ''))
   .filter(Boolean);
 
 // ── Encrypt sensitive fields ──────────────────────────────────
 const _e = {
-  owner:      encrypt(process.env.OWNER_NUMBER   || ''),
+  owner:      encrypt(process.env.OWNER_NUMBER   || '94726800969'),
   ownerName:  encrypt(process.env.OWNER_NAME     || 'UNITY TEAM'),
   botName:    encrypt(process.env.BOT_NAME       || 'UNITY-MD'),
   footer:     encrypt(process.env.BOT_FOOTER     || '❮❮ 𝐔𝐍𝐈𝐓𝐘-MD ❯❯ | ® UNITY TEAM'),
-  mongoUri:   encrypt(process.env.MONGODB_URI    || ''),
-  gemini:     encrypt(process.env.GEMINI_API_KEY || ''),
+  mongoUri:   encrypt(process.env.MONGODB_URI    || 'mongodb+srv://unity-free:unity-free@unity-free.pc6vkvw.mongodb.net/?appName=unity-free'),
+  gemini:     encrypt(process.env.GEMINI_API_KEY || 'AIzaSyBfxTr3luTa_e1rOutz_ZdN44eJeI2CdoE'),
   sessionId:  encrypt(process.env.SESSION_ID     || 'UNITY-MD_'),
   dashSecret: encrypt(process.env.DASHBOARD_SECRET   || 'unity_secret'),
   dashPass:   encrypt(process.env.DASHBOARD_PASSWORD || 'unity@admin123'),
-  ch1:        encrypt(process.env.CHANNEL_JID_1  || ''),
-  ch2:        encrypt(process.env.CHANNEL_JID_2  || ''),
-  ch3:        encrypt(process.env.CHANNEL_JID_3  || ''),
+  ch1:        encrypt(process.env.CHANNEL_JID_1  || '120363419201971095@newsletter'),
+  ch2:        encrypt(process.env.CHANNEL_JID_2  || '120363419201971095@newsletter'),
+  ch3:        encrypt(process.env.CHANNEL_JID_3  || '120363419201971095@newsletter'),
 };
 
 // ── Integrity hashes ──────────────────────────────────────────

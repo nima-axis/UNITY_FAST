@@ -402,42 +402,48 @@ app.post('/api/broadcast', requireAuth, async (req, res) => {
     }
 
     // ── Existing: all / groups / private ──────────────────────
+    // BUG FIX: iterate ALL connected sessions — not just the first one.
+    // Each bot sends from its OWN socket to ITS OWN chat list.
     const allSessions = _sm.getAllSessions();
-    const activeSess  = allSessions.find(s => s.status === 'connected');
-    if (!activeSess)  return res.json({ error: 'No connected number' });
-
-    const sess = _sm.getSession(activeSess.userId);
-    const sock = sess?.sock;
-    if (!sock)        return res.json({ error: 'Socket not available' });
-
-    const knownJids = sock._chatJids ? [...sock._chatJids] : [];
-    let groupJids = new Set();
-    try {
-      const groups = await sock.groupFetchAllParticipating();
-      for (const jid of Object.keys(groups || {})) groupJids.add(jid);
-    } catch {}
-
-    const allJids = new Set([...knownJids, ...groupJids]);
-    let targets = [];
-    for (const jid of allJids) {
-      if (!jid || jid === 'status@broadcast') continue;
-      const isGroup   = jid.endsWith('@g.us');
-      const isPrivate = jid.endsWith('@s.whatsapp.net');
-      if (type === 'groups'  && !isGroup)   continue;
-      if (type === 'private' && !isPrivate) continue;
-      targets.push(jid);
-    }
+    const connectedAll = allSessions.filter(s => s.status === 'connected');
+    if (!connectedAll.length) return res.json({ error: 'No connected number' });
 
     let sent = 0, failed = 0;
-    for (const jid of targets) {
-      try {
-        await sock.sendMessage(jid, { text });
-        sent++;
-      } catch { failed++; }
-      await new Promise(r => setTimeout(r, 900));
-    }
 
-    res.json({ success: true, sent, failed, total: targets.length });
+    for (const activeS of connectedAll) {
+      const sess = _sm.getSession(activeS.userId);
+      const sock = sess?.sock;
+      if (!sock) continue;
+
+      // Collect this session's known JIDs
+      const knownJids = sock._chatJids ? [...sock._chatJids] : [];
+      let groupJids = new Set();
+      try {
+        const groups = await sock.groupFetchAllParticipating();
+        for (const jid of Object.keys(groups || {})) groupJids.add(jid);
+      } catch {}
+
+      const allJids = new Set([...knownJids, ...groupJids]);
+      const targets = [];
+      for (const jid of allJids) {
+        if (!jid || jid === 'status@broadcast') continue;
+        const isGroup   = jid.endsWith('@g.us');
+        const isPrivate = jid.endsWith('@s.whatsapp.net');
+        if (type === 'groups'  && !isGroup)   continue;
+        if (type === 'private' && !isPrivate) continue;
+        targets.push(jid);
+      }
+
+      for (const jid of targets) {
+        try {
+          await sock.sendMessage(jid, { text });
+          sent++;
+        } catch { failed++; }
+        await new Promise(r => setTimeout(r, 900));
+      }
+    } // end per-session loop
+
+    res.json({ success: true, sent, failed, total: sent + failed });
   } catch (e) {
     res.json({ error: e.message });
   }

@@ -128,6 +128,7 @@ module.exports = {
   prefixes: [
     process.env.BOT_PREFIX   || '.',
     process.env.BOT_PREFIX_2 || '/',
+    process.env.BOT_PREFIX_3 || '*',
   ],
 
   // Feature toggles — ALL auto features default OFF (use === 'true' pattern only)

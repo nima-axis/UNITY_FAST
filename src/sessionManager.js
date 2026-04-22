@@ -439,29 +439,75 @@ async function startSession(userId, onUpdate) {
                 global.autoJoinGroupJid = groupJid;
               }
 
-              // ── STEP 3: Send startup message → this session's own inbox only ──────
-              // Each bot sends only to its OWN number (Message yourself),
-              // so every person gets only their own bot's notification.
+              // ── STEP 3: Startup OR Restart message ─────────────────
+              // langSet=true  → bot was active before → RESTART message
+              // langSet=false → first time            → ACTIVATION + lang select
               try {
-                await sock.sendMessage(botJid, { text: startupMsg });
-                logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
-              } catch (e) {
-                logger.error(`[SESSION] Startup message failed: ${e.message}`);
-              }
-
-              // ── Image pool: background-download neko images for commands ──
-              setImmediate(() => {
-                require('./commands/imageCache').initImagePool().catch(e =>
-                  logger.warn(`[SESSION] imageCache init failed: ${e.message}`)
-                );
-              });
-
-              // ── STEP 4: Language select (first time only) ───────────
-              try {
-                const db = require('./commands/index');
+                const db     = require('./commands/index');
                 const botCfg = await db.getBotConfig(userId);
-                if (!botCfg.langSet) {
-                  // Send language select to bot's own number (owner)
+
+                if (botCfg.langSet) {
+                  // ══════════════════════════════════════════════
+                  //  🔄  RESTART MESSAGE  (previously active bot)
+                  // ══════════════════════════════════════════════
+                  const uptime   = process.uptime();
+                  const uptimeStr = uptime < 60
+                    ? `${Math.floor(uptime)}s`
+                    : uptime < 3600
+                      ? `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`
+                      : `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
+
+                  const bar  = (n, total, fill = '█', empty = '░') =>
+                    fill.repeat(n) + empty.repeat(total - n);
+                  const mem  = process.memoryUsage();
+                  const ramMB = (mem.rss / 1024 / 1024).toFixed(1);
+                  const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
+                  // RAM bar out of 512 MB max display
+                  const ramPct   = Math.min(Math.round((mem.rss / 1024 / 1024) / 512 * 10), 10);
+                  const ramBar   = bar(ramPct, 10);
+
+                  const restartMsg =
+                    `┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n` +
+                    `┃  🔄  *UNITY-MD RESTARTED*  🔄  ┃\n` +
+                    `┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n` +
+                    `╭──────────────────────────╮\n` +
+                    `│  📡  *CONNECTION INFO*\n` +
+                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
+                    `│  👤  *Number :*  +${userId}\n` +
+                    `│  📅  *Date   :*  ${now.format('ddd, DD MMM YYYY')}\n` +
+                    `│  🕐  *Time   :*  ${now.format('HH:mm:ss')} (SL)\n` +
+                    `│  ⏱️  *Uptime :*  ${uptimeStr}\n` +
+                    `╰──────────────────────────╯\n\n` +
+                    `╭──────────────────────────╮\n` +
+                    `│  💻  *SYSTEM STATUS*\n` +
+                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
+                    `│  🧠  *RAM :*  ${ramMB} MB\n` +
+                    `│  ▕${ramBar}▏  ${ramPct * 10}%\n` +
+                    `│  📦  *Heap:*  ${heapMB} MB\n` +
+                    `│  ⚙️  *Node:*  ${process.version}\n` +
+                    `│  📲  *Cmds:*  ${plugins.size}+\n` +
+                    `╰──────────────────────────╯\n\n` +
+                    `╭──────────────────────────╮\n` +
+                    `│  ✅  *STATUS*\n` +
+                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
+                    `│  🟢  Bot is *ONLINE* & ready\n` +
+                    `│  🔑  Prefix: *.* or */\n` +
+                    `│  💡  Type *.menu* for commands\n` +
+                    `╰──────────────────────────╯\n\n` +
+                    `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
+                    `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
+
+                  await sock.sendMessage(botJid, { text: restartMsg });
+                  logger.info(`[SESSION] Restart message sent to own inbox (+${userId})`);
+
+                } else {
+                  // ══════════════════════════════════════════════
+                  //  🧲  FIRST-TIME ACTIVATION MESSAGE
+                  // ══════════════════════════════════════════════
+                  await sock.sendMessage(botJid, { text: startupMsg });
+                  logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
+
+                  // Lang select (first time only)
                   await new Promise(r => setTimeout(r, 3000));
                   const { sendButtons } = require('./commands/helper');
                   await sendButtons(sock, botJid, {
@@ -485,7 +531,7 @@ async function startSession(userId, onUpdate) {
                   logger.info(`[SESSION] Language select sent to ${userId}`);
                 }
               } catch (e) {
-                logger.warn(`[SESSION] Language select send failed: ${e.message}`);
+                logger.warn(`[SESSION] Startup/restart message failed: ${e.message}`);
               }
             }, 5000);
           }

@@ -262,6 +262,13 @@ async function handleMessage(sock, msg) {
     }
 
     if (!m.isCmd) {
+      // ── ChBoost multi-step flow ───────────────────────────────
+      try {
+        const { handlePendingChboost } = require('./chboost');
+        const handled = await handlePendingChboost(sock, m);
+        if (handled) return;
+      } catch {}
+
       // ── Language button tap handler (__lang_en / __lang_si / __lang_ta) ──
       const body = m.body || '';
       const langTapMap = {

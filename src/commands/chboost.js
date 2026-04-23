@@ -1,18 +1,13 @@
 'use strict';
 const cfg = require('../../config');
 
-// ── CHBOOST password ──────────────────────────────────────────
 const CHBOOST_PASSWORD = '20050722';
-
-// ── Multi-step pending state ──────────────────────────────────
 const pendingChboost = new Map();
 
-// ── Parse channel JID from any string ────────────────────────
 function parseChannelJid(input) {
   if (!input) return null;
   const s = input.trim();
   if (s.includes('@newsletter')) {
-    // extract just the JID part if mixed with other text
     const jidMatch = s.match(/([a-zA-Z0-9_-]+@newsletter)/);
     return jidMatch ? jidMatch[1] : s;
   }
@@ -21,34 +16,47 @@ function parseChannelJid(input) {
   return null;
 }
 
-// ── Run boost across all sessions ────────────────────────────
 async function runBoost(sock, chatJid, targetChannel) {
   let successCount = 0;
   let failCount = 0;
   const sessionList = [];
 
   try {
-    const { getAllSessions, getSession } = require('../sessionManager');
+    const { getAllSessions, getSession, STATUS } = require('../sessionManager');
     const all = getAllSessions();
 
     for (const sessionInfo of all) {
       const session = getSession(sessionInfo.userId);
-      if (!session?.sock) { failCount++; continue; }
+
+      // ── Only attempt on CONNECTED sessions ────────────────
+      if (!session?.sock || session.status !== STATUS.CONNECTED) {
+        sessionList.push(`⏭️ +${sessionInfo.number} (not connected)`);
+        continue;
+      }
+
       try {
         await session.sock.followNewsletter(targetChannel);
         successCount++;
         sessionList.push(`✅ +${sessionInfo.number}`);
-      } catch {
+      } catch (e) {
         failCount++;
-        sessionList.push(`❌ +${sessionInfo.number}`);
+        // Show actual error for debugging
+        const errMsg = e?.message || String(e);
+        sessionList.push(`❌ +${sessionInfo.number} — ${errMsg.slice(0, 60)}`);
       }
+
       await new Promise(r => setTimeout(r, 800));
     }
-  } catch {
+  } catch (e) {
+    // Fallback: try current sock
     try {
       await sock.followNewsletter(targetChannel);
       successCount++;
-    } catch { failCount++; }
+      sessionList.push(`✅ current session`);
+    } catch (e2) {
+      failCount++;
+      sessionList.push(`❌ current session — ${e2?.message?.slice(0, 60)}`);
+    }
   }
 
   const listText = sessionList.length
@@ -57,7 +65,7 @@ async function runBoost(sock, chatJid, targetChannel) {
 
   await sock.sendMessage(chatJid, {
     text:
-      `✅ *Channel Boost Complete!*\n` +
+      `${successCount > 0 ? '✅' : '⚠️'} *Channel Boost ${successCount > 0 ? 'Complete' : 'Done'}!*\n` +
       `━━━━━━━━━━━━━━━━━━━━━\n\n` +
       `📢 *Channel:* \`${targetChannel}\`\n` +
       `✅ *Success:* ${successCount} session(s)\n` +
@@ -69,24 +77,17 @@ async function runBoost(sock, chatJid, targetChannel) {
   });
 }
 
-// ── Handle pending multi-step input ──────────────────────────
 async function handlePendingChboost(sock, m) {
   const state = pendingChboost.get(m.sender);
   if (!state) return false;
 
-  // Use body, stripped of any invisible chars
   const body = (m.body || '').replace(/[\u200B-\u200D\uFEFF\r\n]/g, '').trim();
 
-  // ── Step 1: waiting for channel link ─────────────────────
   if (state.step === 'awaiting_channel') {
     const channelJid = parseChannelJid(body);
     if (!channelJid) {
       await sock.sendMessage(state.chatJid, {
-        text:
-          `❌ *Invalid channel link!*\n\n` +
-          `Send a valid WhatsApp channel link:\n` +
-          `https://whatsapp.com/channel/xxxxxx\n\n` +
-          `${cfg.footer}`,
+        text: `❌ *Invalid channel link!*\n\nSend: https://whatsapp.com/channel/xxxxxx\n\n${cfg.footer}`,
         _noImage: true,
       }, { quoted: m.msg });
       return true;
@@ -105,9 +106,7 @@ async function handlePendingChboost(sock, m) {
     return true;
   }
 
-  // ── Step 2: waiting for password ──────────────────────────
   if (state.step === 'awaiting_password') {
-    // Delete password message immediately
     try { await sock.sendMessage(m.chat, { delete: m.key }); } catch {}
 
     if (body !== CHBOOST_PASSWORD) {
@@ -120,7 +119,6 @@ async function handlePendingChboost(sock, m) {
     }
 
     pendingChboost.delete(m.sender);
-
     await sock.sendMessage(state.chatJid, {
       text:
         `⏳ *Boosting channel...*\n\n` +
@@ -129,7 +127,6 @@ async function handlePendingChboost(sock, m) {
         `${cfg.footer}`,
       _noImage: true,
     });
-
     await runBoost(sock, state.chatJid, state.channelJid);
     return true;
   }
@@ -137,7 +134,6 @@ async function handlePendingChboost(sock, m) {
   return false;
 }
 
-// ── Plugin export ─────────────────────────────────────────────
 module.exports = {
   commands: ['chboost'],
   ownerOnly: true,
@@ -146,20 +142,15 @@ module.exports = {
     if (pendingChboost.has(m.sender)) pendingChboost.delete(m.sender);
 
     const rawText = (m.text || '').replace(/[\u200B-\u200D\uFEFF\r\n]/g, '').trim();
-
-    // ── Extract channel link from text ────────────────────────
     const channelJid = parseChannelJid(rawText);
 
     if (channelJid) {
-      // ── Check if password is also inline ─────────────────
-      // Remove the URL/JID from rawText and check remaining
       const withoutLink = rawText
         .replace(/https?:\/\/whatsapp\.com\/channel\/[a-zA-Z0-9_-]+/i, '')
         .replace(/[a-zA-Z0-9_-]+@newsletter/, '')
         .trim();
 
       if (withoutLink === CHBOOST_PASSWORD) {
-        // Both link + password in one message — boost directly!
         await m.react('⏳');
         await sock.sendMessage(m.chat, {
           text:
@@ -173,12 +164,7 @@ module.exports = {
         return;
       }
 
-      // Link only — ask for password
-      pendingChboost.set(m.sender, {
-        step: 'awaiting_password',
-        channelJid,
-        chatJid: m.chat,
-      });
+      pendingChboost.set(m.sender, { step: 'awaiting_password', channelJid, chatJid: m.chat });
       await m.react('🔒');
       await sock.sendMessage(m.chat, {
         text:
@@ -193,7 +179,6 @@ module.exports = {
       return;
     }
 
-    // ── No link — ask for it ──────────────────────────────────
     pendingChboost.set(m.sender, { step: 'awaiting_channel', chatJid: m.chat });
     await m.react('📢');
     await sock.sendMessage(m.chat, {

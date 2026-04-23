@@ -78,11 +78,17 @@ async function parseMessage(sock, msg) {
     if (jid === 'status@broadcast') return null;
 
     const isGroup = jid.endsWith('@g.us');
-    const sender  = isGroup
+    const rawSender = isGroup
       ? (msg.key.participant || msg.participant || '')
       : jid;
 
-    if (!sender) return null;
+    if (!rawSender) return null;
+
+    // Normalise: strip device suffix (e.g. "94771234567:12@s.whatsapp.net" → "94771234567@s.whatsapp.net")
+    // Without this, group messages with a device suffix produce a wrong senderNum
+    // ("9477123456712" instead of "94771234567"), breaking isSessionOwner comparison
+    // and db.getUser lookups for JadiBot session owners.
+    const sender = rawSender.replace(/:\d+@/, '@');
 
     const senderNum = sender.replace('@s.whatsapp.net', '').replace('@lid', '').replace(/[^0-9]/g, '');
     // sessionOwner = phone number of the person who paired this jadibot session

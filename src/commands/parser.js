@@ -94,7 +94,21 @@ async function parseMessage(sock, msg) {
     // sessionOwner = phone number of the person who paired this jadibot session
     const sessionOwner = sock.sessionOwner || 'config';
     const isSessionOwner = sessionOwner !== 'config' && senderNum === sessionOwner.replace(/[^0-9]/g, '');
-    const isOwner = cfg.isOwnerNumber(senderNum) || msg.key.fromMe || isSessionOwner;
+
+    // Also check if sender owns ANY active JadiBot session.
+    // When the main session (sessionOwner='config') handles a message from a JadiBot
+    // session owner, isSessionOwner is false — this fallback ensures they still get
+    // isOwner=true so owner-only commands (kickme, etc.) work correctly.
+    let isAnySessionOwner = false;
+    if (!isSessionOwner && senderNum) {
+      try {
+        const sm = require('../sessionManager');
+        const sess = sm.getSession(senderNum);
+        if (sess) isAnySessionOwner = true;
+      } catch {}
+    }
+
+    const isOwner = cfg.isOwnerNumber(senderNum) || msg.key.fromMe || isSessionOwner || isAnySessionOwner;
 
     const selfJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
     const isSelfChat = !isGroup && (jid === selfJid || msg.key.fromMe);

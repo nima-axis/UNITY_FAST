@@ -23,9 +23,9 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
+  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   proto,
-  Browsers,
 } = require('@whiskeysockets/baileys');
 const { Boom }     = require('@hapi/boom');
 const pino         = require('pino');
@@ -38,7 +38,6 @@ const { handleGroupJoin, handleGroupLeave }   = require('./commands/groupHandler
 const { autoBehaviors, handleStatus, handleCall } = require('./commands/autoHandler');
 // clearAllChatsOnStartup removed — was auto-running on every startup and deleting chats unintentionally
 const logger       = require('./commands/logger');
-const { t, getLang } = require('./commands/strings');
 
 // ── Per-user AuthState Schema ─────────────────────────────────
 const userAuthSchema = new mongoose.Schema({
@@ -140,23 +139,12 @@ async function getUserAuthState(userId) {
 
 // ── Create / start a session for a user ──────────────────────
 async function startSession(userId, onUpdate) {
-  // Don't double-start connected sessions
+  // Don't double-start
   if (sessions.has(userId)) {
     const existing = sessions.get(userId);
-    if (existing.status === STATUS.CONNECTED) {
+    if (existing.status === STATUS.CONNECTED || existing.status === STATUS.PAIRING) {
       return existing;
     }
-    // Close ANY existing non-connected socket before starting fresh.
-    // CONNECTING/PAIRING/DISCONNECTED sockets still fire qr/connection events
-    // on the OLD session object — new session object sits in Map with
-    // pairCode=null so frontend never sees the code. Close first.
-    logger.info(`[SESSION] ${userId} existing session (${existing.status}) — closing before fresh start`);
-    try {
-      existing._manualStop = true;
-      existing.sock?.end?.();
-      existing.sock?.ws?.close?.();
-    } catch {}
-    sessions.delete(userId);
   }
 
   const session = {
@@ -174,13 +162,19 @@ async function startSession(userId, onUpdate) {
   async function connect() {
     try {
       const { state, saveCreds } = await getUserAuthState(userId);
-      // ── DO NOT call fetchLatestBaileysVersion() ───────────────────────
-      // Official Baileys 2026 docs: "It is NOT recommended to set the latest
-      // version on your socket every time you connect, as you may face
-      // incompatibility." Library uses its own tested default — leave it alone.
-      const silentLogger = pino({ level: 'silent' });
+      // Fallback version if network request fails (e.g. Railway restrictions)
+      let version;
+      try {
+        const vResult = await fetchLatestBaileysVersion();
+        version = vResult.version;
+      } catch (e) {
+        logger.warn(`[SESSION] fetchLatestBaileysVersion failed, using fallback: ${e.message}`);
+        version = [2, 3000, 1015901307]; // stable fallback version
+      }
+      const silentLogger         = pino({ level: 'silent' });
 
       const sock = makeWASocket({
+        version,
         logger: silentLogger,
         msgRetryCounterCache: session.retryCache,
 
@@ -204,19 +198,15 @@ async function startSession(userId, onUpdate) {
           keys:  makeCacheableSignalKeyStore(state.keys, silentLogger),
         },
 
+        // ── KEY FIX: return undefined (not empty proto) for unknown msgs ──
+        // Returning empty proto tells Baileys the message exists → no retry
+        // Returning undefined tells Baileys to request retry from sender (correct)
         getMessage: async (key) => {
           const stored = session.msgStore.get(key.id);
-          return stored || proto.Message.fromObject({});
+          return stored || undefined;
         },
 
-        // Dynamic browser:
-        //   - Not yet paired  → macOS Google Chrome  (official Baileys 2026 docs:
-        //     "set a valid/logical browser config e.g. Browsers.macOS('Google Chrome'),
-        //      otherwise the pair will fail")
-        //   - Already paired  → Ubuntu Chrome (desktop, full features + status react)
-        browser: state.creds.registered
-          ? Browsers.ubuntu('Chrome')
-          : Browsers.macOS('Google Chrome'),
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
       });
 
       session.sock = sock;
@@ -277,29 +267,35 @@ async function startSession(userId, onUpdate) {
       // ── Connection events ──────────────────────────────────
       sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
 
-        // ── Pair code request ─────────────────────────────────────────────
-        // Trigger ONLY on !!qr — at this moment the WA WebSocket handshake
-        // is COMPLETE and the server is ready. 'connecting' + setTimeout was
-        // unreliable: handshake takes 2-4s, fixed delays race and silently
-        // throw "Connection Closed", producing a code WA never accepts.
-        // When !!qr fires, socket is open — call requestPairingCode directly.
-        // If it fails, next qr event fires in ~20s and auto-retries.
-        if (!!qr && !sock.authState.creds.registered && !session.pairCode && !session._pairingInProgress) {
-          session._pairingInProgress = true;
+        // Generate pair code when connecting + not yet registered
+        if ((connection === 'connecting' || !!qr) && !sock.authState.creds.registered && !session.pairCode) {
           session.status = STATUS.PAIRING;
           if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING });
-          const cleanNum = userId.replace(/[^0-9]/g, '');
-          try {
-            const code = await sock.requestPairingCode(cleanNum);
-            session.pairCode = code?.match(/.{1,4}/g)?.join('-') || code;
-            session._pairingInProgress = false;
-            logger.info(`[SESSION] Pair code for ${userId}: ${session.pairCode}`);
-            if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING, pairCode: session.pairCode });
-          } catch (e) {
-            session._pairingInProgress = false;
-            // Auto-retry: next !!qr event (~20s) will call this block again
-            logger.warn(`[SESSION] Pair code request failed for ${userId}: ${e.message} — auto-retry on next qr`);
-          }
+          // Small delay to let socket stabilize before requesting pair code
+          setTimeout(async () => {
+            if (sock.authState.creds.registered || session.pairCode) return;
+            try {
+              const cleanNum = userId.replace(/[^0-9]/g, '');
+              const code = await sock.requestPairingCode(cleanNum);
+              session.pairCode = code?.match(/.{1,4}/g)?.join('-') || code;
+              logger.info(`[SESSION] Pair code for ${userId}: ${session.pairCode}`);
+              if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING, pairCode: session.pairCode });
+            } catch (e) {
+              logger.error(`[SESSION] Pair code error for ${userId}: ${e.message}`);
+              // Retry once after 5 seconds
+              setTimeout(async () => {
+                if (sock.authState.creds.registered || session.pairCode) return;
+                try {
+                  const cleanNum = userId.replace(/[^0-9]/g, '');
+                  const code = await sock.requestPairingCode(cleanNum);
+                  session.pairCode = code?.match(/.{1,4}/g)?.join('-') || code;
+                  if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING, pairCode: session.pairCode });
+                } catch (e2) {
+                  logger.error(`[SESSION] Pair code retry failed for ${userId}: ${e2.message}`);
+                }
+              }, 5000);
+            }
+          }, 3000);
         }
 
         if (connection === 'close') {
@@ -313,14 +309,11 @@ async function startSession(userId, onUpdate) {
             return;
           }
 
-          // ── 515 restartRequired: normal post-pairing WA handshake ────────
-          // After entering the pair code, WA forces a disconnect with 515 so
-          // the socket can reconnect with freshly-saved credentials.
-          // Reconnect must be IMMEDIATE — any delay causes the notification
-          // to expire before the new socket opens.
+          // 515 = restartRequired: normal post-pairing WA handshake
+          // Reconnect immediately so the session activates without delay
           if (reason === DisconnectReason.restartRequired) {
             logger.info(`[SESSION] ${userId} restart required (515) — reconnecting immediately`);
-            session.pairCode = null; // clear stale code
+            session.pairCode = null;
             setImmediate(() => connect());
             return;
           }
@@ -337,10 +330,9 @@ async function startSession(userId, onUpdate) {
             await clearUserSession(userId);
             if (onUpdate) onUpdate(userId, { status: STATUS.ERROR, reason });
           } else {
-            // ── Always retry — never auto-clear on network/restart failures ──
-            // Only loggedOut (401) and forbidden clear the session (handled above).
-            // Railway restarts, network blips, WA server issues all produce
-            // non-401 codes — retrying indefinitely is the correct behaviour.
+            // ── Always retry — never give up on a paired session ──
+            // WA stays linked even if bot disconnects temporarily.
+            // Cap at 120s between retries after first 10 attempts.
             session.retries++;
             const delay = session.retries <= 10
               ? Math.min(5000 + session.retries * 8000, 90000)
@@ -351,10 +343,10 @@ async function startSession(userId, onUpdate) {
         }
 
         if (connection === 'open') {
-          session.status          = STATUS.CONNECTED;
-          session.pairCode        = null;
-          session.connectedAt     = new Date();
-          session.retries         = 0;
+          session.status     = STATUS.CONNECTED;
+          session.pairCode   = null;
+          session.connectedAt= new Date();
+          session.retries    = 0;
           logger.success(`[SESSION] ${userId} connected ✅`);
           if (onUpdate) onUpdate(userId, { status: STATUS.CONNECTED, number: userId });
 
@@ -368,23 +360,21 @@ async function startSession(userId, onUpdate) {
             setTimeout(async () => {
               const moment = require('moment-timezone');
               const now = moment().tz(cfg.timezone || 'Asia/Colombo');
+              // Use sock.user?.id to get the real JID (avoids :XX suffix issues)
               const rawBotJid = sock.user?.id || (userId + '@s.whatsapp.net');
               const botJid = rawBotJid.includes('@') ? rawBotJid.replace(/:\d+@/, '@') : rawBotJid + '@s.whatsapp.net';
 
-              // ── Resolve language BEFORE building any text ──────────
-              const lang = await getLang(db, sock.sessionOwner);
-
               const startupMsg =
                 `╔══════════════════════════╗\n` +
-                `║  ${t('startup.activated', lang)}  ║\n` +
+                `║  🧲  *UNITY-MD ACTIVATED*  🧩  ║\n` +
                 `╚══════════════════════════╝\n\n` +
-                `${t('startup.connected', lang)} +${userId}\n` +
-                `${t('startup.date', lang)} ${now.format('ddd, DD MMM YYYY')}\n` +
-                `${t('startup.time', lang)} ${now.format('HH:mm')} (SL)\n\n` +
-                `${t('startup.active', lang)}\n` +
-                `${t('startup.commands', lang)} ${plugins.size}+\n` +
-                `${t('startup.prefix', lang)}\n\n` +
-                `${t('startup.typemenu', lang)}\n\n` +
+                `👤 *Connected:* +${userId}\n` +
+                `📅 *Date:* ${now.format('ddd, DD MMM YYYY')}\n` +
+                `🕐 *Time:* ${now.format('HH:mm')} (SL)\n\n` +
+                `✅ *Bot is now active!*\n` +
+                `📦 Commands: ${plugins.size}+\n` +
+                `🔑 Prefix: *.* or */\n\n` +
+                `💡 Type *.menu* to see all features\n\n` +
                 `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
                 `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
 
@@ -458,28 +448,75 @@ async function startSession(userId, onUpdate) {
                 global.autoJoinGroupJid = groupJid;
               }
 
-              // ── STEP 3: Send startup message → this session's own inbox only ──────
-              // Each bot sends only to its OWN number (Message yourself),
-              // so every person gets only their own bot's notification.
+              // ── STEP 3: Startup OR Restart message ─────────────────
+              // langSet=true  → bot was active before → RESTART message
+              // langSet=false → first time            → ACTIVATION + lang select
               try {
-                await sock.sendMessage(botJid, { text: startupMsg });
-                logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
-              } catch (e) {
-                logger.error(`[SESSION] Startup message failed: ${e.message}`);
-              }
+                const db     = require('./commands/index');
+                const botCfg = await db.getBotConfig(userId);
 
-              // ── Image pool: background-download neko images for commands ──
-              setImmediate(() => {
-                require('./commands/imageCache').initImagePool().catch(e =>
-                  logger.warn(`[SESSION] imageCache init failed: ${e.message}`)
-                );
-              });
+                if (botCfg.langSet) {
+                  // ══════════════════════════════════════════════
+                  //  🔄  RESTART MESSAGE  (previously active bot)
+                  // ══════════════════════════════════════════════
+                  const uptime   = process.uptime();
+                  const uptimeStr = uptime < 60
+                    ? `${Math.floor(uptime)}s`
+                    : uptime < 3600
+                      ? `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`
+                      : `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
 
-              // ── STEP 4: Language select (first time only) ───────────
-              try {
-                const botCfg = await db.getBotConfig();
-                if (!botCfg.langSet) {
-                  // Send language select to bot's own number (owner)
+                  const bar  = (n, total, fill = '█', empty = '░') =>
+                    fill.repeat(n) + empty.repeat(total - n);
+                  const mem  = process.memoryUsage();
+                  const ramMB = (mem.rss / 1024 / 1024).toFixed(1);
+                  const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
+                  // RAM bar out of 512 MB max display
+                  const ramPct   = Math.min(Math.round((mem.rss / 1024 / 1024) / 512 * 10), 10);
+                  const ramBar   = bar(ramPct, 10);
+
+                  const restartMsg =
+                    `┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n` +
+                    `┃  🔄  *UNITY-MD RESTARTED*  🔄  ┃\n` +
+                    `┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n` +
+                    `╭──────────────────────────╮\n` +
+                    `│  📡  *CONNECTION INFO*\n` +
+                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
+                    `│  👤  *Number :*  +${userId}\n` +
+                    `│  📅  *Date   :*  ${now.format('ddd, DD MMM YYYY')}\n` +
+                    `│  🕐  *Time   :*  ${now.format('HH:mm:ss')} (SL)\n` +
+                    `│  ⏱️  *Uptime :*  ${uptimeStr}\n` +
+                    `╰──────────────────────────╯\n\n` +
+                    `╭──────────────────────────╮\n` +
+                    `│  💻  *SYSTEM STATUS*\n` +
+                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
+                    `│  🧠  *RAM :*  ${ramMB} MB\n` +
+                    `│  ▕${ramBar}▏  ${ramPct * 10}%\n` +
+                    `│  📦  *Heap:*  ${heapMB} MB\n` +
+                    `│  ⚙️  *Node:*  ${process.version}\n` +
+                    `│  📲  *Cmds:*  ${plugins.size}+\n` +
+                    `╰──────────────────────────╯\n\n` +
+                    `╭──────────────────────────╮\n` +
+                    `│  ✅  *STATUS*\n` +
+                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
+                    `│  🟢  Bot is *ONLINE* & ready\n` +
+                    `│  🔑  Prefix: *.* or */\n` +
+                    `│  💡  Type *.menu* for commands\n` +
+                    `╰──────────────────────────╯\n\n` +
+                    `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
+                    `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
+
+                  await sock.sendMessage(botJid, { text: restartMsg });
+                  logger.info(`[SESSION] Restart message sent to own inbox (+${userId})`);
+
+                } else {
+                  // ══════════════════════════════════════════════
+                  //  🧲  FIRST-TIME ACTIVATION MESSAGE
+                  // ══════════════════════════════════════════════
+                  await sock.sendMessage(botJid, { text: startupMsg });
+                  logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
+
+                  // Lang select (first time only)
                   await new Promise(r => setTimeout(r, 3000));
                   const { sendButtons } = require('./commands/helper');
                   await sendButtons(sock, botJid, {
@@ -503,7 +540,7 @@ async function startSession(userId, onUpdate) {
                   logger.info(`[SESSION] Language select sent to ${userId}`);
                 }
               } catch (e) {
-                logger.warn(`[SESSION] Language select send failed: ${e.message}`);
+                logger.warn(`[SESSION] Startup/restart message failed: ${e.message}`);
               }
             }, 5000);
           }
@@ -551,14 +588,13 @@ async function startSession(userId, onUpdate) {
                 if (botJid) {
                   const deleterNum = deleterJid.split('@')[0];
                   const chatLabel  = chatJid.endsWith('@g.us') ? `Group: ${chatJid}` : `DM: +${chatJid.split('@')[0]}`;
-                  const adLang = await getLang(db, sock.sessionOwner);
 
                   let notifyText =
-                    `${t('antidelete.title', adLang)}\n` +
+                    `🗑️ *Antidelete Alert*\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `${t('antidelete.deletedby', adLang)} +${deleterNum}\n` +
-                    `${t('antidelete.chat', adLang)} ${chatLabel}\n` +
-                    `${t('antidelete.time', adLang)} ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}\n` +
+                    `👤 *Deleted by:* +${deleterNum}\n` +
+                    `📍 *Chat:* ${chatLabel}\n` +
+                    `🕐 *Time:* ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n`;
 
                   if (storedMsg) {
@@ -570,7 +606,7 @@ async function startSession(userId, onUpdate) {
                       storedMsg.videoMessage?.caption ||
                       '';
 
-                    if (textContent) notifyText += `${t('antidelete.message', adLang)} ${textContent}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+                    if (textContent) notifyText += `💬 *Message:* ${textContent}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
 
                     await sock.sendMessage(botJid, { text: notifyText }).catch(() => {});
 
@@ -587,7 +623,7 @@ async function startSession(userId, onUpdate) {
                       }
                     }
                   } else {
-                    notifyText += `${t('antidelete.notcached', adLang)}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+                    notifyText += `⚠️ _Message content not cached_\n━━━━━━━━━━━━━━━━━━━━━━\n`;
                     await sock.sendMessage(botJid, { text: notifyText }).catch(() => {});
                   }
                 }

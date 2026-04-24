@@ -146,17 +146,17 @@ async function startSession(userId, onUpdate) {
     if (existing.status === STATUS.CONNECTED) {
       return existing;
     }
-    // Bug 1 fix: PAIRING session = expired code risk.
-    // Close existing socket + clear session so a fresh code is generated.
-    if (existing.status === STATUS.PAIRING) {
-      logger.info(`[SESSION] ${userId} PAIRING session detected — closing for fresh code`);
-      try {
-        existing._manualStop = true;
-        existing.sock?.end?.();
-        existing.sock?.ws?.close?.();
-      } catch {}
-      sessions.delete(userId);
-    }
+    // Close ANY existing non-connected socket before starting fresh.
+    // CONNECTING/PAIRING/DISCONNECTED sockets still fire qr/connection events
+    // on the OLD session object — new session object sits in Map with
+    // pairCode=null so frontend never sees the code. Close first.
+    logger.info(`[SESSION] ${userId} existing session (${existing.status}) — closing before fresh start`);
+    try {
+      existing._manualStop = true;
+      existing.sock?.end?.();
+      existing.sock?.ws?.close?.();
+    } catch {}
+    sessions.delete(userId);
   }
 
   const session = {

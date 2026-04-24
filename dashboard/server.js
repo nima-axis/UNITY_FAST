@@ -98,22 +98,23 @@ app.post('/api/pair', async (req, res) => {
   }
 
   try {
-    const sess = await _sm.startSession(userId, (uid, update) => {
+    await _sm.startSession(userId, (uid, update) => {
       io.emit('session_update', { userId: uid, ...update });
     });
 
+    // Always poll the live Map entry — startSession may replace the session
+    // object, so a stale local reference would never see pairCode.
     let waited = 0;
-    while (!sess.pairCode && sess.status !== 'connected' && sess.status !== 'error' && waited < 60000) {
+    while (waited < 60000) {
+      const live = _sm.getSession(userId);
+      if (!live) break;
+      if (live.pairCode)               return res.json({ ok: true, status: 'pairing', pairCode: live.pairCode, number: userId });
+      if (live.status === 'connected') return res.json({ ok: true, status: 'already_connected', number: userId });
+      if (live.status === 'error')     return res.status(500).json({ ok: false, error: 'Session error. Please try again.' });
       await new Promise(r => setTimeout(r, 500));
       waited += 500;
     }
 
-    if (sess.status === 'error') {
-      return res.status(500).json({ ok: false, error: 'Session error. Please try again.' });
-    }
-
-    if (sess.status === 'connected') return res.json({ ok: true, status: 'already_connected', number: userId });
-    if (sess.pairCode)               return res.json({ ok: true, status: 'pairing', pairCode: sess.pairCode, number: userId });
     return res.status(504).json({ ok: false, error: 'Pair code timeout. Try again.' });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });

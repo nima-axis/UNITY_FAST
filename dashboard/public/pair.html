@@ -446,6 +446,33 @@ input[type=text]::placeholder{color:rgba(74,85,128,0.5)}
 
 </div>
 
+<!-- PASSWORD GATE MODAL -->
+<div id="pass-gate" style="display:none;position:fixed;inset:0;z-index:110;background:rgba(3,5,14,0.97);backdrop-filter:blur(22px);display:none;align-items:center;justify-content:center;padding:24px">
+  <div style="width:100%;max-width:400px;background:var(--card);border:1px solid rgba(0,255,136,0.15);border-radius:26px;padding:36px 28px;position:relative;box-shadow:0 0 80px rgba(0,255,136,0.08)">
+    <div style="position:absolute;top:0;left:0;right:0;height:1px;border-radius:26px 26px 0 0;background:linear-gradient(90deg,transparent,rgba(0,255,136,0.7),rgba(0,224,255,0.4),transparent)"></div>
+    <!-- icon -->
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="display:inline-flex;width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,rgba(0,255,136,0.1),rgba(0,224,255,0.06));border:1px solid rgba(0,255,136,0.2);align-items:center;justify-content:center;font-size:2rem">🔐</div>
+    </div>
+    <div style="text-align:center;margin-bottom:6px;font-family:'Syne',sans-serif;font-size:1.15rem;font-weight:800;color:var(--text)">Settings Password</div>
+    <div id="pass-gate-num" style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--sub);margin-bottom:22px"></div>
+    <div style="background:rgba(0,255,136,0.025);border:1px solid rgba(0,255,136,0.08);border-radius:13px;padding:12px 16px;margin-bottom:20px;font-size:.76rem;color:var(--sub);line-height:1.7">
+      📲 ඔයාගෙ WhatsApp inbox ට bot එකෙන් <span style="color:var(--g5)">🔐 DASHBOARD PASSWORD</span> message එකක් ලැබිලා ඇති. ඒ password එක enter කරන්න.
+    </div>
+    <!-- input -->
+    <div style="margin-bottom:14px">
+      <input type="text" id="pass-input" maxlength="7" placeholder="NNN-NNN"
+        style="width:100%;background:rgba(0,255,136,0.025);border:1.5px solid rgba(0,255,136,0.1);border-radius:13px;padding:0 18px;height:54px;color:var(--g1);font-size:1.3rem;font-family:'JetBrains Mono',monospace;font-weight:800;text-align:center;letter-spacing:4px;outline:none;transition:all .25s"
+        oninput="this.value=this.value.replace(/[^0-9-]/g,'').toUpperCase();document.getElementById('pass-err').style.display='none'"
+        onkeydown="if(event.key==='Enter')verifyPass()">
+    </div>
+    <div id="pass-err" style="display:none;background:rgba(255,63,91,.05);border:1px solid rgba(255,63,91,.18);border-radius:11px;padding:10px 14px;color:var(--red);font-size:.8rem;margin-bottom:14px;text-align:center"></div>
+    <!-- buttons -->
+    <button id="pass-verify-btn" class="btn btn-full" onclick="verifyPass()" style="margin-bottom:10px">🔓 Verify Password</button>
+    <button class="btn btn-full btn-ghost" onclick="closePassGate()">✕ Cancel</button>
+  </div>
+</div>
+
 <!-- SETTINGS MODAL -->
 <div id="settings-overlay" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(3,5,14,0.94);backdrop-filter:blur(18px);overflow-y:auto;padding:24px 16px">
   <div style="max-width:560px;margin:0 auto">
@@ -505,7 +532,11 @@ function resetForm(){curNum=null;if(pollInt)clearInterval(pollInt);if(timerInt)c
 document.getElementById('numIn').addEventListener('keydown',e=>{if(e.key==='Enter')startPair();});
 function switchTab(el,panel){document.querySelectorAll('.feat-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.feat-panel').forEach(p=>p.classList.remove('active'));el.classList.add('active');const p=document.getElementById('panel-'+panel);if(p)p.classList.add('active');}
 let cfgData=null,cfgChanges={},cfgNum=null;
-function openSettings(){cfgNum=curNum;cfgChanges={commands:{},features:{},mode:null};document.getElementById('settings-overlay').style.display='block';document.getElementById('cfg-num').textContent='+'+cfgNum;document.getElementById('cfg-loading').style.display='block';document.getElementById('cfg-body').style.display='none';document.getElementById('cfg-error').style.display='none';document.getElementById('save-bar').style.display='none';loadCfg();}
+function openSettings(){cfgNum=curNum;document.getElementById('pass-gate-num').textContent='+'+cfgNum;document.getElementById('pass-input').value='';document.getElementById('pass-err').style.display='none';const btn=document.getElementById('pass-verify-btn');btn.disabled=false;btn.textContent='🔓 Verify Password';const g=document.getElementById('pass-gate');g.style.display='flex';}
+function closePassGate(){document.getElementById('pass-gate').style.display='none';}
+async function verifyPass(){const pwd=document.getElementById('pass-input').value.trim();if(!pwd){showPassErr('Password enter කරන්න');return;}const btn=document.getElementById('pass-verify-btn');btn.disabled=true;btn.textContent='⏳ Checking...';try{const r=await fetch('/api/pair/verify/'+cfgNum,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});const d=await r.json();if(d.ok){document.getElementById('pass-gate').style.display='none';_openSettingsPanel();}else{if(d.error==='WRONG_PASSWORD')showPassErr('❌ Password වැරදියි. WhatsApp inbox check කරන්න.');else if(d.error==='NO_PASSWORD')showPassErr('⚠️ Password නෑ. Bot restart කරලා WhatsApp message check කරන්න.');else showPassErr(d.error||'Verification failed');btn.disabled=false;btn.textContent='🔓 Verify Password';}}catch(e){showPassErr('Network error. Try again.');btn.disabled=false;btn.textContent='🔓 Verify Password';}}
+function showPassErr(msg){const e=document.getElementById('pass-err');e.textContent=msg;e.style.display='block';}
+function _openSettingsPanel(){cfgChanges={commands:{},features:{},mode:null};document.getElementById('settings-overlay').style.display='block';document.getElementById('cfg-num').textContent='+'+cfgNum;document.getElementById('cfg-loading').style.display='block';document.getElementById('cfg-body').style.display='none';document.getElementById('cfg-error').style.display='none';document.getElementById('save-bar').style.display='none';loadCfg();}
 function closeSettings(){document.getElementById('settings-overlay').style.display='none'}
 async function loadCfg(){try{const r=await fetch('/api/pair/settings/'+cfgNum);const d=await r.json();if(!d.ok)throw new Error(d.error||'Failed to load');cfgData=d;renderCfg();}catch(e){document.getElementById('cfg-loading').style.display='none';const er=document.getElementById('cfg-error');er.textContent='⚠️ '+e.message;er.style.display='block';}}
 function markDirty(){document.getElementById('save-bar').style.display='flex'}

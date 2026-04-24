@@ -446,6 +446,29 @@ async function startSession(userId, onUpdate) {
                 const db     = require('./commands/index');
                 const botCfg = await db.getBotConfig(userId);
 
+                // ── Generate dashboard password ONCE, send to user ──────
+                if (!botCfg.sessionPassword) {
+                  const raw  = Math.floor(100000 + Math.random() * 900000).toString();
+                  botCfg.sessionPassword = raw.slice(0, 3) + '-' + raw.slice(3);
+                  await botCfg.save();
+                  const passMsg =
+                    `╔══════════════════════════╗\n` +
+                    `║  🔐  *DASHBOARD PASSWORD*  🔐  ║\n` +
+                    `╚══════════════════════════╝\n\n` +
+                    `🌐 *Bot Settings Website Password:*\n\n` +
+                    `🔑  *${botCfg.sessionPassword}*\n\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `📌 Pair site එකෙ *Configure Bot Settings*\n` +
+                    `   button click කරාම මේ password ඕන වෙනවා.\n\n` +
+                    `⚠️ *මේ password කාටවත් දෙන්න එපා!*\n` +
+                    `   ඒ කෙනාට ඔයාගෙ bot settings වෙනස්\n` +
+                    `   කරන්න පුළුවන් වෙනවා.\n\n` +
+                    `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
+                    `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
+                  await sock.sendMessage(botJid, { text: passMsg }).catch(() => {});
+                  logger.info(`[SESSION] Dashboard password generated & sent to +${userId}`);
+                }
+
                 if (botCfg.langSet) {
                   // ══════════════════════════════════════════════
                   //  🔄  RESTART MESSAGE  (previously active bot)

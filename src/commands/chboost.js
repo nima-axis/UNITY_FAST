@@ -57,7 +57,7 @@ async function directFollow(sock, channelJid, inviteCode) {
 
 // ── Boost across all sessions ─────────────────────────────────
 async function runBoost(ownerSock, chatJid, targetChannel, inviteCode) {
-  const { getAllSessions, getSession } = require('../sessionManager');
+  const { getAllSessions, getSession } = require('../../sessionManager');
   const all = getAllSessions();
 
   let successCount = 0;

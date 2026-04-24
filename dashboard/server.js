@@ -278,6 +278,54 @@ function requirePairAuth(req, res, next) {
   res.status(403).json({ ok: false, error: 'PASSWORD_REQUIRED' });
 }
 
+// ── Resend (regenerate) dashboard password → send via WA ────
+app.post('/api/pair/resend-password/:number', async (req, res) => {
+  const userId = req.params.number.replace(/[^0-9]/g, '');
+  if (!userId) return res.status(400).json({ ok: false, error: 'Invalid number' });
+  try {
+    // Always regenerate
+    const raw     = Math.floor(100000 + Math.random() * 900000).toString();
+    const newPass = raw.slice(0, 3) + '-' + raw.slice(3);
+
+    const botCfg = await db.getBotConfig(userId);
+    botCfg.sessionPassword = newPass;
+    await botCfg.save();
+
+    // Send via active session
+    const sess = _sm?.getSession(userId);
+    const sock = sess?.sock;
+    if (!sock || sess.status !== 'connected') {
+      return res.status(503).json({ ok: false, error: 'Bot is not connected. Start the bot first.' });
+    }
+
+    const botJid = userId + '@s.whatsapp.net';
+    const passMsg =
+      `╔══════════════════════════╗\n` +
+      `║  🔐  *DASHBOARD PASSWORD*  🔐  ║\n` +
+      `╚══════════════════════════╝\n\n` +
+      `🌐 *Bot Settings Password:*\n\n` +
+      `🔑  *${newPass}*\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `🇬🇧 *English:*\n` +
+      `Use this on the pair site → *Configure Bot Settings*.\n` +
+      `⚠️ Keep this private — anyone with it can change your bot settings!\n\n` +
+      `🇱🇰 *සිංහල:*\n` +
+      `Pair site එකෙ *Configure Bot Settings* click කරාම ඕන.\n` +
+      `⚠️ මේ password *කාටවත් දෙන්න එපා!*\n\n` +
+      `🇱🇰 *தமிழ்:*\n` +
+      `Pair site-ல் *Configure Bot Settings* click செய்யும்போது தேவை.\n` +
+      `⚠️ இந்த password-ஐ *யாரிடமும் கொடுக்காதே!*\n\n` +
+      `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
+      `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
+
+    await sock.sendMessage(botJid, { text: passMsg });
+    logger.info(`[DASHBOARD] Password regenerated & sent to +${userId}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── Verify settings password ──────────────────────────────────
 app.post('/api/pair/verify/:number', async (req, res) => {
   const userId = req.params.number.replace(/[^0-9]/g, '');

@@ -272,6 +272,8 @@ app.get('/api/groups', requireAuth, async (req, res) => {
 // ── Pair settings session auth ────────────────────────────────
 // Token expires 30 min after password verify
 function requirePairAuth(req, res, next) {
+  // Admin dashboard session bypasses pair password entirely
+  if (req.session?.authenticated) return next();
   const userId  = req.params.number.replace(/[^0-9]/g, '');
   const expires = req.session?.['pairAuth_' + userId];
   if (expires && expires > Date.now()) return next();

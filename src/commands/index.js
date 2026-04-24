@@ -167,6 +167,8 @@ const botConfigSchema = new mongoose.Schema({
   // Per-command toggle map  (commandName → boolean)
   // Commands missing from the map = disabled
   enabledCommands: { type: Map, of: Boolean, default: () => new Map() },
+  // Dashboard settings password (auto-generated on first connect, sent via WA)
+  sessionPassword: { type: String, default: null },
   // Channel boost active tasks
   boostTasks: [{
     link:      String,

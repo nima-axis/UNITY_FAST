@@ -337,30 +337,11 @@ async function startSession(userId, onUpdate) {
             await clearUserSession(userId);
             if (onUpdate) onUpdate(userId, { status: STATUS.ERROR, reason });
           } else {
-            // ── Retry — but detect "linked device removed" after repeated failures ──
-            // When a linked device is removed from WA, the bot keeps getting
-            // disconnect codes that are NOT loggedOut (401) — WA sends 428 or
-            // undefined. After MAX_RETRY_BEFORE_CLEAR attempts we try to reconnect
-            // one final time; if it fails again without reaching 'open', we treat
-            // it as a permanent removal and clear the session from MongoDB.
+            // ── Always retry — never auto-clear on network/restart failures ──
+            // Only loggedOut (401) and forbidden clear the session (handled above).
+            // Railway restarts, network blips, WA server issues all produce
+            // non-401 codes — retrying indefinitely is the correct behaviour.
             session.retries++;
-            const MAX_RETRY_BEFORE_CLEAR = 3;
-
-            if (session.retries > MAX_RETRY_BEFORE_CLEAR) {
-              // Check if creds still valid by attempting reconnect once more.
-              // If connection reaches 'open', retries reset to 0 (handled above).
-              // If it closes again, clear — device was removed.
-              logger.warn(`[SESSION] ${userId} exceeded max retries (${MAX_RETRY_BEFORE_CLEAR}) — attempting final reconnect before clearing`);
-              session._clearOnNextClose = true;
-            }
-
-            if (session._clearOnNextClose && session.retries > MAX_RETRY_BEFORE_CLEAR + 1) {
-              logger.warn(`[SESSION] ${userId} final reconnect also failed — device likely removed, clearing session`);
-              await clearUserSession(userId);
-              if (onUpdate) onUpdate(userId, { status: STATUS.ERROR, reason });
-              return;
-            }
-
             const delay = session.retries <= 10
               ? Math.min(5000 + session.retries * 8000, 90000)
               : 120000; // retry every 2 min indefinitely
@@ -374,7 +355,6 @@ async function startSession(userId, onUpdate) {
           session.pairCode        = null;
           session.connectedAt     = new Date();
           session.retries         = 0;
-          session._clearOnNextClose = false;
           logger.success(`[SESSION] ${userId} connected ✅`);
           if (onUpdate) onUpdate(userId, { status: STATUS.CONNECTED, number: userId });
 

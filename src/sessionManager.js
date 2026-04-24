@@ -446,33 +446,6 @@ async function startSession(userId, onUpdate) {
                 const db     = require('./commands/index');
                 const botCfg = await db.getBotConfig(userId);
 
-                // ── Generate dashboard password ONCE, send to user ──────
-                if (!botCfg.sessionPassword) {
-                  const raw  = Math.floor(100000 + Math.random() * 900000).toString();
-                  botCfg.sessionPassword = raw.slice(0, 3) + '-' + raw.slice(3);
-                  await botCfg.save();
-                  const passMsg =
-                    `╔══════════════════════════╗\n` +
-                    `║  🔐  *DASHBOARD PASSWORD*  🔐  ║\n` +
-                    `╚══════════════════════════╝\n\n` +
-                    `🌐 *Bot Settings Password:*\n\n` +
-                    `🔑  *${botCfg.sessionPassword}*\n\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-                    `🇬🇧 *English:*\n` +
-                    `Use this password on the pair site when clicking *Configure Bot Settings*.\n` +
-                    `⚠️ Keep this *private* — anyone with it can change your bot settings!\n\n` +
-                    `🇱🇰 *සිංහල:*\n` +
-                    `Pair site එකෙ *Configure Bot Settings* click කරාම මේ password ඕන.\n` +
-                    `⚠️ මේ password *කාටවත් දෙන්න එපා!* ඒ කෙනාට ඔයාගෙ bot settings වෙනස් කරන්න පුළුවන්.\n\n` +
-                    `🇱🇰 *தமிழ்:*\n` +
-                    `Pair site-ல் *Configure Bot Settings* click செய்யும்போது இந்த password தேவை.\n` +
-                    `⚠️ இந்த password-ஐ *யாரிடமும் கொடுக்காதே!* அவர்கள் உங்கள் bot settings மாற்றலாம்.\n\n` +
-                    `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
-                    `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
-                  await sock.sendMessage(botJid, { text: passMsg }).catch(() => {});
-                  logger.info(`[SESSION] Dashboard password generated & sent to +${userId}`);
-                }
-
                 if (botCfg.langSet) {
                   // ══════════════════════════════════════════════
                   //  🔄  RESTART MESSAGE  (previously active bot)

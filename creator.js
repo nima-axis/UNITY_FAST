@@ -264,8 +264,8 @@ module.exports = {
         `⚡ _Back online in a few seconds!_\n\n` +
         `${cfg.footer}`;
 
-      const THUMB_URL = 'https://qu.ax/x/3Qgql.jpg';
-      const AUDIO_URL = 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3';
+      const THUMB_URL = 'https://i.ibb.co/W4zwVktH/1777104289725.jpg';
+      const AUDIO_URL = 'https://files.catbox.moe/zmkssv.mp3';
 
       // Channel JID for "View channel" button
       const channelJid = cfg.channel1 || '120363419201971095@newsletter';

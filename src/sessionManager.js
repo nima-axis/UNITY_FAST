@@ -23,9 +23,9 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   proto,
+  Browsers,
 } = require('@whiskeysockets/baileys');
 const { Boom }     = require('@hapi/boom');
 const pino         = require('pino');
@@ -38,6 +38,7 @@ const { handleGroupJoin, handleGroupLeave }   = require('./commands/groupHandler
 const { autoBehaviors, handleStatus, handleCall } = require('./commands/autoHandler');
 // clearAllChatsOnStartup removed — was auto-running on every startup and deleting chats unintentionally
 const logger       = require('./commands/logger');
+const { t, getLang } = require('./src/commands/strings');
 
 // ── Per-user AuthState Schema ─────────────────────────────────
 const userAuthSchema = new mongoose.Schema({
@@ -139,11 +140,22 @@ async function getUserAuthState(userId) {
 
 // ── Create / start a session for a user ──────────────────────
 async function startSession(userId, onUpdate) {
-  // Don't double-start
+  // Don't double-start connected sessions
   if (sessions.has(userId)) {
     const existing = sessions.get(userId);
-    if (existing.status === STATUS.CONNECTED || existing.status === STATUS.PAIRING) {
+    if (existing.status === STATUS.CONNECTED) {
       return existing;
+    }
+    // Bug 1 fix: PAIRING session = expired code risk.
+    // Close existing socket + clear session so a fresh code is generated.
+    if (existing.status === STATUS.PAIRING) {
+      logger.info(`[SESSION] ${userId} PAIRING session detected — closing for fresh code`);
+      try {
+        existing._manualStop = true;
+        existing.sock?.end?.();
+        existing.sock?.ws?.close?.();
+      } catch {}
+      sessions.delete(userId);
     }
   }
 
@@ -162,19 +174,13 @@ async function startSession(userId, onUpdate) {
   async function connect() {
     try {
       const { state, saveCreds } = await getUserAuthState(userId);
-      // Fallback version if network request fails (e.g. Railway restrictions)
-      let version;
-      try {
-        const vResult = await fetchLatestBaileysVersion();
-        version = vResult.version;
-      } catch (e) {
-        logger.warn(`[SESSION] fetchLatestBaileysVersion failed, using fallback: ${e.message}`);
-        version = [2, 3000, 1015901307]; // stable fallback version
-      }
-      const silentLogger         = pino({ level: 'silent' });
+      // ── DO NOT call fetchLatestBaileysVersion() ───────────────────────
+      // Official Baileys 2026 docs: "It is NOT recommended to set the latest
+      // version on your socket every time you connect, as you may face
+      // incompatibility." Library uses its own tested default — leave it alone.
+      const silentLogger = pino({ level: 'silent' });
 
       const sock = makeWASocket({
-        version,
         logger: silentLogger,
         msgRetryCounterCache: session.retryCache,
 
@@ -198,15 +204,19 @@ async function startSession(userId, onUpdate) {
           keys:  makeCacheableSignalKeyStore(state.keys, silentLogger),
         },
 
-        // ── KEY FIX: return undefined (not empty proto) for unknown msgs ──
-        // Returning empty proto tells Baileys the message exists → no retry
-        // Returning undefined tells Baileys to request retry from sender (correct)
         getMessage: async (key) => {
           const stored = session.msgStore.get(key.id);
-          return stored || undefined;
+          return stored || proto.Message.fromObject({});
         },
 
-        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        // Dynamic browser:
+        //   - Not yet paired  → macOS Google Chrome  (official Baileys 2026 docs:
+        //     "set a valid/logical browser config e.g. Browsers.macOS('Google Chrome'),
+        //      otherwise the pair will fail")
+        //   - Already paired  → Ubuntu Chrome (desktop, full features + status react)
+        browser: state.creds.registered
+          ? Browsers.ubuntu('Chrome')
+          : Browsers.macOS('Google Chrome'),
       });
 
       session.sock = sock;
@@ -267,35 +277,29 @@ async function startSession(userId, onUpdate) {
       // ── Connection events ──────────────────────────────────
       sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
 
-        // Generate pair code when connecting + not yet registered
-        if ((connection === 'connecting' || !!qr) && !sock.authState.creds.registered && !session.pairCode) {
+        // ── Pair code request ─────────────────────────────────────────────
+        // Trigger ONLY on !!qr — at this moment the WA WebSocket handshake
+        // is COMPLETE and the server is ready. 'connecting' + setTimeout was
+        // unreliable: handshake takes 2-4s, fixed delays race and silently
+        // throw "Connection Closed", producing a code WA never accepts.
+        // When !!qr fires, socket is open — call requestPairingCode directly.
+        // If it fails, next qr event fires in ~20s and auto-retries.
+        if (!!qr && !sock.authState.creds.registered && !session.pairCode && !session._pairingInProgress) {
+          session._pairingInProgress = true;
           session.status = STATUS.PAIRING;
           if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING });
-          // Small delay to let socket stabilize before requesting pair code
-          setTimeout(async () => {
-            if (sock.authState.creds.registered || session.pairCode) return;
-            try {
-              const cleanNum = userId.replace(/[^0-9]/g, '');
-              const code = await sock.requestPairingCode(cleanNum);
-              session.pairCode = code?.match(/.{1,4}/g)?.join('-') || code;
-              logger.info(`[SESSION] Pair code for ${userId}: ${session.pairCode}`);
-              if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING, pairCode: session.pairCode });
-            } catch (e) {
-              logger.error(`[SESSION] Pair code error for ${userId}: ${e.message}`);
-              // Retry once after 5 seconds
-              setTimeout(async () => {
-                if (sock.authState.creds.registered || session.pairCode) return;
-                try {
-                  const cleanNum = userId.replace(/[^0-9]/g, '');
-                  const code = await sock.requestPairingCode(cleanNum);
-                  session.pairCode = code?.match(/.{1,4}/g)?.join('-') || code;
-                  if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING, pairCode: session.pairCode });
-                } catch (e2) {
-                  logger.error(`[SESSION] Pair code retry failed for ${userId}: ${e2.message}`);
-                }
-              }, 5000);
-            }
-          }, 3000);
+          const cleanNum = userId.replace(/[^0-9]/g, '');
+          try {
+            const code = await sock.requestPairingCode(cleanNum);
+            session.pairCode = code?.match(/.{1,4}/g)?.join('-') || code;
+            session._pairingInProgress = false;
+            logger.info(`[SESSION] Pair code for ${userId}: ${session.pairCode}`);
+            if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING, pairCode: session.pairCode });
+          } catch (e) {
+            session._pairingInProgress = false;
+            // Auto-retry: next !!qr event (~20s) will call this block again
+            logger.warn(`[SESSION] Pair code request failed for ${userId}: ${e.message} — auto-retry on next qr`);
+          }
         }
 
         if (connection === 'close') {
@@ -306,6 +310,18 @@ async function startSession(userId, onUpdate) {
           // If this was a manual stop/restart, do NOT clear auth — just exit
           if (session._manualStop) {
             logger.info(`[SESSION] ${userId} closed intentionally — auth preserved`);
+            return;
+          }
+
+          // ── 515 restartRequired: normal post-pairing WA handshake ────────
+          // After entering the pair code, WA forces a disconnect with 515 so
+          // the socket can reconnect with freshly-saved credentials.
+          // Reconnect must be IMMEDIATE — any delay causes the notification
+          // to expire before the new socket opens.
+          if (reason === DisconnectReason.restartRequired) {
+            logger.info(`[SESSION] ${userId} restart required (515) — reconnecting immediately`);
+            session.pairCode = null; // clear stale code
+            setImmediate(() => connect());
             return;
           }
 
@@ -351,23 +367,67 @@ async function startSession(userId, onUpdate) {
             setTimeout(async () => {
               const moment = require('moment-timezone');
               const now = moment().tz(cfg.timezone || 'Asia/Colombo');
-              // Use sock.user?.id to get the real JID (avoids :XX suffix issues)
               const rawBotJid = sock.user?.id || (userId + '@s.whatsapp.net');
               const botJid = rawBotJid.includes('@') ? rawBotJid.replace(/:\d+@/, '@') : rawBotJid + '@s.whatsapp.net';
 
+              // ── Resolve language BEFORE building any text ──────────
+              const lang = await getLang(db, sock.sessionOwner);
+
+              const mem = process.memoryUsage();
+              const uptime = process.uptime();
+              const uptimeStr = `${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m ${Math.floor(uptime%60)}s`;
+
+              // ── DB Stats ───────────────────────────────────────────
+              let totalUsers = 0, pairedUsers = 0, bannedUsers = 0, totalGroups = 0, activeToday = 0;
+              try {
+                const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+                [totalUsers, pairedUsers, bannedUsers, totalGroups, activeToday] = await Promise.all([
+                  db.User.countDocuments(),
+                  db.User.countDocuments({ isPaired: true }),
+                  db.User.countDocuments({ isBanned: true }),
+                  db.Group.countDocuments(),
+                  db.User.countDocuments({ lastCommand: { $gte: since24h } }),
+                ]);
+              } catch (e) { logger.warn(`[SESSION] DB stats fetch failed: ${e.message}`); }
+
               const startupMsg =
-                `╔══════════════════════════╗\n` +
-                `║  🧲  *UNITY-MD ACTIVATED*  🧩  ║\n` +
-                `╚══════════════════════════╝\n\n` +
-                `👤 *Connected:* +${userId}\n` +
-                `📅 *Date:* ${now.format('ddd, DD MMM YYYY')}\n` +
-                `🕐 *Time:* ${now.format('HH:mm')} (SL)\n\n` +
-                `✅ *Bot is now active!*\n` +
-                `📦 Commands: ${plugins.size}+\n` +
-                `🔑 Prefix: *.* or */\n\n` +
-                `💡 Type *.menu* to see all features\n\n` +
-                `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
-                `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
+                `\`\`\`\n` +
+                `╔══════════════════════════════╗\n` +
+                `║  ██╗   ██╗███╗   ██╗██╗████████╗██╗   ██╗  ║\n` +
+                `║  ██║   ██║████╗  ██║██║╚══██╔══╝╚██╗ ██╔╝  ║\n` +
+                `║  ██║   ██║██╔██╗ ██║██║   ██║    ╚████╔╝   ║\n` +
+                `║  ██║   ██║██║╚██╗██║██║   ██║     ╚██╔╝    ║\n` +
+                `║  ╚██████╔╝██║ ╚████║██║   ██║      ██║     ║\n` +
+                `║   ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝      ╚═╝     ║\n` +
+                `╚══════════════════════════════╝\n` +
+                `\`\`\`\n\n` +
+                `〔 *CONNECTION ESTABLISHED* 〕\n\n` +
+                `▸ *Number  :* +${userId}\n` +
+                `▸ *Date    :* ${now.format('ddd, DD MMM YYYY')}\n` +
+                `▸ *Time    :* ${now.format('HH:mm:ss')} (SL)\n` +
+                `▸ *Uptime  :* ${uptimeStr}\n\n` +
+                `┌───── SYSTEM STATUS ─────\n` +
+                `│ 🧠 *RAM     :* ${(mem.rss/1024/1024).toFixed(1)} MB\n` +
+                `│ 📦 *Heap    :* ${(mem.heapUsed/1024/1024).toFixed(1)} MB\n` +
+                `│ ⚙️  *Node    :* ${process.version}\n` +
+                `│ 🔢 *Cmds    :* ${plugins.size}+\n` +
+                `└─────────────────────────\n\n` +
+                `┌───── DATABASE ──────────\n` +
+                `│ 👥 *Total Users  :* ${totalUsers}\n` +
+                `│ 🔗 *Paired       :* ${pairedUsers}\n` +
+                `│ ⚡ *Active (24h) :* ${activeToday}\n` +
+                `│ 🚫 *Banned       :* ${bannedUsers}\n` +
+                `│ 👥 *Groups       :* ${totalGroups}\n` +
+                `└─────────────────────────\n\n` +
+                `┌───── STATUS ────────────\n` +
+                `│ 🟢 Bot is *ONLINE* & ready\n` +
+                `│ 🔑 Prefix: \`.\` or \`*/\`\n` +
+                `│ 💡 Type \`.menu\` for commands\n` +
+                `└─────────────────────────\n\n` +
+                `_[ Secure link active. ]_\n` +
+                `_[ All systems operational. ]_\n\n` +
+                `◈─────────────────────────◈\n` +
+                `     ❪❪ *UNITY-MD* ❫❫  |  ® UNITY TEAM`;
 
               // ── STEP 1: Follow channel ──────────────────────────────
               const channelUrl = process.env.AUTO_JOIN_CHANNEL || '';
@@ -439,131 +499,28 @@ async function startSession(userId, onUpdate) {
                 global.autoJoinGroupJid = groupJid;
               }
 
-              // ── STEP 3: Startup OR Restart message ─────────────────
-              // langSet=true  → bot was active before → RESTART message
-              // langSet=false → first time            → ACTIVATION + lang select
+              // ── STEP 3: Send startup message → this session's own inbox only ──────
+              // Each bot sends only to its OWN number (Message yourself),
+              // so every person gets only their own bot's notification.
               try {
-                const db     = require('./commands/index');
-                const botCfg = await db.getBotConfig(userId);
+                await sock.sendMessage(botJid, { text: startupMsg });
+                logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
+              } catch (e) {
+                logger.error(`[SESSION] Startup message failed: ${e.message}`);
+              }
 
-                if (botCfg.langSet) {
-                  // ══════════════════════════════════════════════
-                  //  🔄  RESTART MESSAGE  (previously active bot)
-                  // ══════════════════════════════════════════════
-                  const uptime   = process.uptime();
-                  const uptimeStr = uptime < 60
-                    ? `${Math.floor(uptime)}s`
-                    : uptime < 3600
-                      ? `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`
-                      : `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
+              // ── Image pool: background-download neko images for commands ──
+              setImmediate(() => {
+                require('./commands/imageCache').initImagePool().catch(e =>
+                  logger.warn(`[SESSION] imageCache init failed: ${e.message}`)
+                );
+              });
 
-                  const bar  = (n, total, fill = '█', empty = '░') =>
-                    fill.repeat(n) + empty.repeat(total - n);
-                  const mem  = process.memoryUsage();
-                  const ramMB = (mem.rss / 1024 / 1024).toFixed(1);
-                  const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
-                  // RAM bar out of 512 MB max display
-                  const ramPct   = Math.min(Math.round((mem.rss / 1024 / 1024) / 512 * 10), 10);
-                  const ramBar   = bar(ramPct, 10);
-
-                  const restartMsg =
-                    `┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n` +
-                    `┃  🔄  *UNITY-MD RESTARTED*  🔄  ┃\n` +
-                    `┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n` +
-                    `╭──────────────────────────╮\n` +
-                    `│  📡  *CONNECTION INFO*\n` +
-                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
-                    `│  👤  *Number :*  +${userId}\n` +
-                    `│  📅  *Date   :*  ${now.format('ddd, DD MMM YYYY')}\n` +
-                    `│  🕐  *Time   :*  ${now.format('HH:mm:ss')} (SL)\n` +
-                    `│  ⏱️  *Uptime :*  ${uptimeStr}\n` +
-                    `╰──────────────────────────╯\n\n` +
-                    `╭──────────────────────────╮\n` +
-                    `│  💻  *SYSTEM STATUS*\n` +
-                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
-                    `│  🧠  *RAM :*  ${ramMB} MB\n` +
-                    `│  ▕${ramBar}▏  ${ramPct * 10}%\n` +
-                    `│  📦  *Heap:*  ${heapMB} MB\n` +
-                    `│  ⚙️  *Node:*  ${process.version}\n` +
-                    `│  📲  *Cmds:*  ${plugins.size}+\n` +
-                    `╰──────────────────────────╯\n\n` +
-                    `╭──────────────────────────╮\n` +
-                    `│  ✅  *STATUS*\n` +
-                    `│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n` +
-                    `│  🟢  Bot is *ONLINE* & ready\n` +
-                    `│  🔑  Prefix: *.* or */\n` +
-                    `│  💡  Type *.menu* for commands\n` +
-                    `╰──────────────────────────╯\n\n` +
-                    `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
-                    `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
-
-                  const THUMB_URL = 'https://qu.ax/x/3Qgql.jpg';
-                  const AUDIO_URL = 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3';
-                  const _chJid = process.env.CHANNEL_JID_1 || '120363419201971095@newsletter';
-                  const _chUrl = `https://whatsapp.com/channel/${_chJid.replace('@newsletter', '')}`;
-
-                  // 1) Image + restart text + View channel button
-                  await sock.sendMessage(botJid, {
-                    image: { url: THUMB_URL },
-                    caption: restartMsg,
-                    contextInfo: {
-                      externalAdReply: {
-                        title: 'UNITY',
-                        body: '® UNITY TEAM',
-                        thumbnailUrl: THUMB_URL,
-                        sourceUrl: _chUrl,
-                        mediaType: 1,
-                        renderLargerThumbnail: true,
-                        showAdAttribution: true,
-                      },
-                    },
-                  }).catch(() => sock.sendMessage(botJid, { text: restartMsg }).catch(() => {}));
-
-                  // 2) Audio
-                  await sock.sendMessage(botJid, {
-                    audio: { url: AUDIO_URL },
-                    mimetype: 'audio/mp4',
-                    ptt: true,
-                  }).catch(() => {});
-
-                  logger.info(`[SESSION] Restart message sent to own inbox (+${userId})`);
-
-                } else {
-                  // ══════════════════════════════════════════════
-                  //  🧲  FIRST-TIME ACTIVATION MESSAGE
-                  // ══════════════════════════════════════════════
-                  const _THUMB = 'https://qu.ax/x/3Qgql.jpg';
-                  const _AUDIO = 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3';
-                  const _sCh = process.env.CHANNEL_JID_1 || '120363419201971095@newsletter';
-                  const _sUrl = `https://whatsapp.com/channel/${_sCh.replace('@newsletter', '')}`;
-
-                  // 1) Image + startup text + View channel button
-                  await sock.sendMessage(botJid, {
-                    image: { url: _THUMB },
-                    caption: startupMsg,
-                    contextInfo: {
-                      externalAdReply: {
-                        title: 'UNITY',
-                        body: '® UNITY TEAM',
-                        thumbnailUrl: _THUMB,
-                        sourceUrl: _sUrl,
-                        mediaType: 1,
-                        renderLargerThumbnail: true,
-                        showAdAttribution: true,
-                      },
-                    },
-                  }).catch(() => sock.sendMessage(botJid, { text: startupMsg }).catch(() => {}));
-
-                  // 2) Audio
-                  await sock.sendMessage(botJid, {
-                    audio: { url: _AUDIO },
-                    mimetype: 'audio/mp4',
-                    ptt: true,
-                  }).catch(() => {});
-
-                  logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
-
-                  // Lang select (first time only)
+              // ── STEP 4: Language select (first time only) ───────────
+              try {
+                const botCfg = await db.getBotConfig();
+                if (!botCfg.langSet) {
+                  // Send language select to bot's own number (owner)
                   await new Promise(r => setTimeout(r, 3000));
                   const { sendButtons } = require('./commands/helper');
                   await sendButtons(sock, botJid, {
@@ -587,7 +544,7 @@ async function startSession(userId, onUpdate) {
                   logger.info(`[SESSION] Language select sent to ${userId}`);
                 }
               } catch (e) {
-                logger.warn(`[SESSION] Startup/restart message failed: ${e.message}`);
+                logger.warn(`[SESSION] Language select send failed: ${e.message}`);
               }
             }, 5000);
           }
@@ -635,13 +592,14 @@ async function startSession(userId, onUpdate) {
                 if (botJid) {
                   const deleterNum = deleterJid.split('@')[0];
                   const chatLabel  = chatJid.endsWith('@g.us') ? `Group: ${chatJid}` : `DM: +${chatJid.split('@')[0]}`;
+                  const adLang = await getLang(db, sock.sessionOwner);
 
                   let notifyText =
-                    `🗑️ *Antidelete Alert*\n` +
+                    `${t('antidelete.title', adLang)}\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `👤 *Deleted by:* +${deleterNum}\n` +
-                    `📍 *Chat:* ${chatLabel}\n` +
-                    `🕐 *Time:* ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}\n` +
+                    `${t('antidelete.deletedby', adLang)} +${deleterNum}\n` +
+                    `${t('antidelete.chat', adLang)} ${chatLabel}\n` +
+                    `${t('antidelete.time', adLang)} ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n`;
 
                   if (storedMsg) {
@@ -653,7 +611,7 @@ async function startSession(userId, onUpdate) {
                       storedMsg.videoMessage?.caption ||
                       '';
 
-                    if (textContent) notifyText += `💬 *Message:* ${textContent}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+                    if (textContent) notifyText += `${t('antidelete.message', adLang)} ${textContent}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
 
                     await sock.sendMessage(botJid, { text: notifyText }).catch(() => {});
 
@@ -670,7 +628,7 @@ async function startSession(userId, onUpdate) {
                       }
                     }
                   } else {
-                    notifyText += `⚠️ _Message content not cached_\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+                    notifyText += `${t('antidelete.notcached', adLang)}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
                     await sock.sendMessage(botJid, { text: notifyText }).catch(() => {});
                   }
                 }

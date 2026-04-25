@@ -64,6 +64,8 @@ app.get('/api/auth/check', (req, res) => {
 
 // ── Static files (after auth routes) ─────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
+// Serve bot media files (unity_thumb.jpg etc.)
+app.use('/media', require('express').static(path.join(__dirname, '../src/media')));
 
 function requireAuth(req, res, next) {
   if (req.session?.authenticated) return next();

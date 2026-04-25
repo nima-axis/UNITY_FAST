@@ -238,6 +238,8 @@ async function connectToWhatsApp() {
           try {
             const selfJid = sock.user?.id?.replace(/:[0-9]+@/, '@') || `${num}@s.whatsapp.net`;
             const thumbPath = './src/media/unity_thumb.jpg';
+            const { sendUrlButtons } = require('./src/commands/helper');
+
             // 1) Send image with caption
             if (fs.existsSync(thumbPath)) {
               const thumb = await fs.readFile(thumbPath);
@@ -245,11 +247,17 @@ async function connectToWhatsApp() {
             } else {
               await sock.sendMessage(selfJid, { text: onlineMsg }).catch(() => {});
             }
-            // 2) Send startup audio
+            // 2) Send startup audio (voice note)
             await sock.sendMessage(selfJid, {
               audio: { url: 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3' },
               mimetype: 'audio/mp4',
-              ptt: false,
+              ptt: true,
+            }).catch(() => {});
+            // 3) YouTube subscribe button
+            await sendUrlButtons(sock, selfJid, {
+              text: `🎬 *Subscribe to our YouTube channel!*\n\nStay updated with latest tutorials & updates from *UNITY TEAM* 🧲`,
+              footer: cfg.footer,
+              buttons: [{ label: '▶️ Subscribe on YouTube', url: 'https://www.youtube.com/@team_astral_yt' }],
             }).catch(() => {});
           } catch (_e) {}
         });

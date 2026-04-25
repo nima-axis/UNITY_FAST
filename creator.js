@@ -267,64 +267,13 @@ module.exports = {
       const THUMB_URL = 'https://qu.ax/x/3Qgql.jpg';
       const AUDIO_URL = 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3';
 
-      // Helper: download image buffer from URL
-      const fetchBuf = (url) => new Promise((res, rej) => {
-        const mod = url.startsWith('https') ? require('https') : require('http');
-        mod.get(url, (r) => {
-          const c = [];
-          r.on('data', d => c.push(d));
-          r.on('end', () => res(Buffer.concat(c)));
-          r.on('error', rej);
-        }).on('error', rej);
-      });
+      // 1) Image + restartup text (one message)
+      await m.sock.sendMessage(m.jid, {
+        image: { url: THUMB_URL },
+        caption: restartMsg,
+      }, { quoted: m.msg }).catch(() => {});
 
-      // 1) Upload image → interactiveMessage with image header + restartup message + YouTube button
-      try {
-        const imgBuf = await fetchBuf(THUMB_URL);
-        const uploaded = await prepareWAMessageMedia(
-          { image: imgBuf },
-          { upload: m.sock.waUploadToServer }
-        );
-        const restartWAMsg = await generateWAMessageFromContent(m.jid, {
-          viewOnceMessage: {
-            message: {
-              messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
-              interactiveMessage: proto.Message.InteractiveMessage.create({
-                header: proto.Message.InteractiveMessage.Header.create({
-                  hasMediaAttachment: true,
-                  imageMessage: uploaded.imageMessage,
-                }),
-                body: proto.Message.InteractiveMessage.Body.create({
-                  text: restartMsg,
-                }),
-                footer: proto.Message.InteractiveMessage.Footer.create({ text: cfg.footer }),
-                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-                  buttons: [{
-                    name: 'cta_url',
-                    buttonParamsJson: JSON.stringify({
-                      display_text: '▶️ Subscribe on YouTube',
-                      url: 'https://www.youtube.com/@team_astral_yt',
-                      merchant_url: 'https://www.youtube.com/@team_astral_yt',
-                    }),
-                  }],
-                }),
-              }),
-            },
-          },
-        }, { quoted: m.msg });
-        await m.sock.relayMessage(restartWAMsg.key.remoteJid, restartWAMsg.message, {
-          messageId: restartWAMsg.key.id,
-          additionalNodes: [{ tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] }],
-        });
-      } catch (_e) {
-        // Fallback: plain image + caption
-        await m.sock.sendMessage(m.jid, {
-          image: { url: THUMB_URL },
-          caption: restartMsg,
-        }, { quoted: m.msg }).catch(() => {});
-      }
-
-      // 2) Send MP3
+      // 2) Audio
       await m.sock.sendMessage(m.jid, {
         audio: { url: AUDIO_URL },
         mimetype: 'audio/mp4',

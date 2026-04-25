@@ -7,6 +7,7 @@ const {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   proto,
+  generateWAMessageFromContent,
 , Browsers } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
@@ -237,8 +238,7 @@ async function connectToWhatsApp() {
         setImmediate(async () => {
           try {
             const selfJid = sock.user?.id?.replace(/:[0-9]+@/, '@') || `${num}@s.whatsapp.net`;
-            const thumbPath = './src/media/unity_thumb.jpg';
-            const { sendUrlButtons } = require('./src/commands/helper');
+            const thumbPath = require('path').join(__dirname, 'src/media/unity_thumb.jpg');
 
             // 1) Send image with caption
             if (fs.existsSync(thumbPath)) {
@@ -247,18 +247,46 @@ async function connectToWhatsApp() {
             } else {
               await sock.sendMessage(selfJid, { text: onlineMsg }).catch(() => {});
             }
-            // 2) Send startup audio (voice note)
+
+            // 2) Send voice note
             await sock.sendMessage(selfJid, {
               audio: { url: 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3' },
               mimetype: 'audio/mp4',
               ptt: true,
             }).catch(() => {});
-            // 3) YouTube subscribe button
-            await sendUrlButtons(sock, selfJid, {
-              text: `🎬 *Subscribe to our YouTube channel!*\n\nStay updated with latest tutorials & updates from *UNITY TEAM* 🧲`,
-              footer: cfg.footer,
-              buttons: [{ label: '▶️ Subscribe on YouTube', url: 'https://www.youtube.com/@team_astral_yt' }],
-            }).catch(() => {});
+
+            // 3) YouTube subscribe button (inline build — no helper dependency)
+            try {
+              const ytMsg = await generateWAMessageFromContent(selfJid, {
+                viewOnceMessage: {
+                  message: {
+                    messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+                    interactiveMessage: proto.Message.InteractiveMessage.create({
+                      body: proto.Message.InteractiveMessage.Body.create({
+                        text: `🎬 *Subscribe to our YouTube channel!*\n\nStay updated with latest tutorials & updates from *UNITY TEAM* 🧲`,
+                      }),
+                      footer: proto.Message.InteractiveMessage.Footer.create({ text: cfg.footer }),
+                      header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
+                      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                        buttons: [{
+                          name: 'cta_url',
+                          buttonParamsJson: JSON.stringify({
+                            display_text: '▶️ Subscribe on YouTube',
+                            url: 'https://www.youtube.com/@team_astral_yt',
+                            merchant_url: 'https://www.youtube.com/@team_astral_yt',
+                          }),
+                        }],
+                      }),
+                    }),
+                  },
+                },
+              }, {});
+              await sock.relayMessage(ytMsg.key.remoteJid, ytMsg.message, {
+                messageId: ytMsg.key.id,
+                additionalNodes: [{ tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] }],
+              });
+            } catch (_btn) {}
+
           } catch (_e) {}
         });
 

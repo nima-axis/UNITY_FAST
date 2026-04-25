@@ -264,26 +264,55 @@ module.exports = {
         `└─────────────────────\n\n` +
         `⚡ _Back online in a few seconds!_\n\n` +
         `${cfg.footer}`;
-      const thumbPath = './src/media/unity_thumb.jpg';
+      const path = require('path');
+      const thumbPath = path.join(__dirname, '../../src/media/unity_thumb.jpg');
       if (fs.existsSync(thumbPath)) {
         const thumb = await fs.readFile(thumbPath);
         await m.sock.sendMessage(m.jid, { image: thumb, caption: restartMsg }, { quoted: m.msg }).catch(() => {});
       } else {
         await m.reply(restartMsg);
       }
-      // ── Send voice note before restarting ──────────────────
+
+      // ── Voice note ─────────────────────────────────────────
       await m.sock.sendMessage(m.jid, {
         audio: { url: 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3' },
         mimetype: 'audio/mp4',
         ptt: true,
       }).catch(() => {});
+
       // ── YouTube subscribe button ───────────────────────────
-      const { sendUrlButtons } = require('./helper');
-      await sendUrlButtons(m.sock, m.jid, {
-        text: `🎬 *Subscribe to our YouTube channel!*\n\nStay updated with latest tutorials & updates from *UNITY TEAM* 🧲`,
-        footer: cfg.footer,
-        buttons: [{ label: '▶️ Subscribe on YouTube', url: 'https://www.youtube.com/@team_astral_yt' }],
-      }).catch(() => {});
+      try {
+        const { generateWAMessageFromContent, proto } = require('@whiskeysockets/baileys');
+        const ytMsg = await generateWAMessageFromContent(m.jid, {
+          viewOnceMessage: {
+            message: {
+              messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+              interactiveMessage: proto.Message.InteractiveMessage.create({
+                body: proto.Message.InteractiveMessage.Body.create({
+                  text: `🎬 *Subscribe to our YouTube channel!*\n\nStay updated with latest tutorials & updates from *UNITY TEAM* 🧲`,
+                }),
+                footer: proto.Message.InteractiveMessage.Footer.create({ text: cfg.footer }),
+                header: proto.Message.InteractiveMessage.Header.create({ hasMediaAttachment: false }),
+                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                  buttons: [{
+                    name: 'cta_url',
+                    buttonParamsJson: JSON.stringify({
+                      display_text: '▶️ Subscribe on YouTube',
+                      url: 'https://www.youtube.com/@team_astral_yt',
+                      merchant_url: 'https://www.youtube.com/@team_astral_yt',
+                    }),
+                  }],
+                }),
+              }),
+            },
+          },
+        }, {});
+        await m.sock.relayMessage(ytMsg.key.remoteJid, ytMsg.message, {
+          messageId: ytMsg.key.id,
+          additionalNodes: [{ tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] }],
+        });
+      } catch (_btn) {}
+
       logger.warn('[CREATOR] Restart command executed');
       setTimeout(() => process.exit(1), 1500);
     }

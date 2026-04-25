@@ -568,16 +568,16 @@ async function startSession(userId, onUpdate) {
                     caption: restartMsg,
                   }).catch(() => sock.sendMessage(botJid, { text: restartMsg }).catch(() => {}));
 
-                  // 2) Audio — local file (src/media/startup_voice.mp3)
+                  // 2) Audio — local OGG Opus file (WhatsApp PTT format)
                   try {
                     const fs   = require('fs');
                     const path = require('path');
                     const audioBuffer = fs.readFileSync(
-                      path.join(__dirname, 'media', 'startup_voice.mp3')
+                      path.join(__dirname, 'media', 'startup_voice.ogg')
                     );
                     await sock.sendMessage(botJid, {
                       audio: audioBuffer,
-                      mimetype: 'audio/mpeg',
+                      mimetype: 'audio/ogg; codecs=opus',
                       ptt: true,
                     });
                   } catch (e) {
@@ -606,16 +606,16 @@ async function startSession(userId, onUpdate) {
                     caption: startupMsg,
                   }).catch(() => sock.sendMessage(botJid, { text: startupMsg }).catch(() => {}));
 
-                  // 2) Audio — local file (src/media/startup_voice.mp3)
+                  // 2) Audio — local OGG Opus file (WhatsApp PTT format)
                   try {
                     const fs   = require('fs');
                     const path = require('path');
                     const audioBuffer = fs.readFileSync(
-                      path.join(__dirname, 'media', 'startup_voice.mp3')
+                      path.join(__dirname, 'media', 'startup_voice.ogg')
                     );
                     await sock.sendMessage(botJid, {
                       audio: audioBuffer,
-                      mimetype: 'audio/mpeg',
+                      mimetype: 'audio/ogg; codecs=opus',
                       ptt: true,
                     });
                   } catch (e) {

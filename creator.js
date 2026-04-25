@@ -267,10 +267,26 @@ module.exports = {
       const THUMB_URL = 'https://qu.ax/x/3Qgql.jpg';
       const AUDIO_URL = 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3';
 
-      // 1) Image + restartup text (one message)
+      // Channel JID for "View channel" button
+      const channelJid = cfg.channel1 || '120363419201971095@newsletter';
+      const channelId  = channelJid.replace('@newsletter', '');
+      const channelUrl = `https://whatsapp.com/channel/${channelId}`;
+
+      // 1) Image + restartup text + "View channel" button — ONE message
       await m.sock.sendMessage(m.jid, {
         image: { url: THUMB_URL },
         caption: restartMsg,
+        contextInfo: {
+          externalAdReply: {
+            title: 'UNITY',
+            body: '® UNITY TEAM',
+            thumbnailUrl: THUMB_URL,
+            sourceUrl: channelUrl,
+            mediaType: 1,
+            renderLargerThumbnail: true,
+            showAdAttribution: true,
+          },
+        },
       }, { quoted: m.msg }).catch(() => {});
 
       // 2) Audio

@@ -138,7 +138,22 @@ async function _isPrimaryBot(sock, groupJid) {
         .sort();
       _botGroupCache.set(groupJid, { bots, ts: now });
     } catch {
-      return true; // can't determine → don't silence
+      // groupMetadata failed (network error, restricted group, etc.)
+      // Fall back: only the session whose JID is alphabetically first
+      // among ALL connected sessions acts — prevents every session
+      // returning true and duplicating warn/kick on error.
+      try {
+        const { getAllSessions } = require('../sessionManager');
+        const allJids = getAllSessions()
+          .filter(s => s.status === 'connected')
+          .map(s => (s.sock?.user?.id || '').split(':')[0] + '@s.whatsapp.net')
+          .filter(j => j !== '@s.whatsapp.net')
+          .sort();
+        if (allJids.length === 0) return true;
+        return allJids[0] === myJid;
+      } catch {
+        return true; // truly can't determine — last resort
+      }
     }
   }
 
@@ -259,26 +274,31 @@ async function handleMessage(sock, msg) {
 
     // ── Bug/crash message protection — ALWAYS ON, cannot be disabled ──
     // Runs for all message types including silent/invisible crashers.
-    // ALL sessions delete the crash message (fastest response, harmless duplicate).
-    // But lock/warn/kick only runs on the PRIMARY session to prevent spam.
+    //
+    // Multi-session strategy:
+    //   • ALL sessions → delete crash msg (fastest wins, duplicate deletes are harmless)
+    //   • PRIMARY session ONLY → track count + warn + kick
+    //     _bugTracker is a module-level Map shared across requires but NOT across
+    //     separate OS processes. In a multi-session single-process setup this is fine
+    //     because we gate on _isPrimaryBot before touching the tracker.
     if (m.isGroup && !m.isOwner && _isBugMsg(msg)) {
-      // Every session deletes — whichever wins the race removes it fastest
+      // Every session deletes immediately — race is fine, first one wins
       try { await sock.sendMessage(m.chat, { delete: msg.key }); } catch {}
 
-      // Only primary session tracks count + takes action (lock/warn/kick)
-      // _isPrimaryBot is cached (60s TTL) so this is fast
+      // Only the primary session may track + act — prevents duplicate warn/kick
       const isPrimaryForBug = await _isPrimaryBot(sock, m.chat).catch(() => true);
       if (isPrimaryForBug) {
         const bugCount = _trackBug(m.chat, m.sender);
         if (bugCount >= BUG_LIMIT) {
           _bugTracker.delete(`${m.chat}:${m.sender}`);
-          // Warn + optionally kick
+          // Warn once
           try {
             await sock.sendMessage(m.chat, {
               text: `⛔ *Anti-Crash Protection*\n\n@${m.sender.split('@')[0]} sent ${BUG_LIMIT} crash messages.\n\n${cfg.footer}`,
               mentions: [m.sender],
             });
           } catch {}
+          // Kick if bot is admin
           if (m.isBotAdmin) {
             try { await sock.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch {}
           }

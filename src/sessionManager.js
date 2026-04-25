@@ -497,14 +497,70 @@ async function startSession(userId, onUpdate) {
                     `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
                     `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
 
-                  await sock.sendMessage(botJid, { text: restartMsg });
+                  const THUMB_URL = 'https://qu.ax/x/3Qgql.jpg';
+                  const AUDIO_URL = 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3';
+                  const _chJid = process.env.CHANNEL_JID_1 || '120363419201971095@newsletter';
+                  const _chUrl = `https://whatsapp.com/channel/${_chJid.replace('@newsletter', '')}`;
+
+                  // 1) Image + restart text + View channel button
+                  await sock.sendMessage(botJid, {
+                    image: { url: THUMB_URL },
+                    caption: restartMsg,
+                    contextInfo: {
+                      externalAdReply: {
+                        title: 'UNITY',
+                        body: '® UNITY TEAM',
+                        thumbnailUrl: THUMB_URL,
+                        sourceUrl: _chUrl,
+                        mediaType: 1,
+                        renderLargerThumbnail: true,
+                        showAdAttribution: true,
+                      },
+                    },
+                  }).catch(() => sock.sendMessage(botJid, { text: restartMsg }).catch(() => {}));
+
+                  // 2) Audio
+                  await sock.sendMessage(botJid, {
+                    audio: { url: AUDIO_URL },
+                    mimetype: 'audio/mp4',
+                    ptt: true,
+                  }).catch(() => {});
+
                   logger.info(`[SESSION] Restart message sent to own inbox (+${userId})`);
 
                 } else {
                   // ══════════════════════════════════════════════
                   //  🧲  FIRST-TIME ACTIVATION MESSAGE
                   // ══════════════════════════════════════════════
-                  await sock.sendMessage(botJid, { text: startupMsg });
+                  const _THUMB = 'https://qu.ax/x/3Qgql.jpg';
+                  const _AUDIO = 'https://www.image2url.com/r2/default/audio/1776957022770-98aea04d-2005-48b7-8bec-cc060ae20da9.mp3';
+                  const _sCh = process.env.CHANNEL_JID_1 || '120363419201971095@newsletter';
+                  const _sUrl = `https://whatsapp.com/channel/${_sCh.replace('@newsletter', '')}`;
+
+                  // 1) Image + startup text + View channel button
+                  await sock.sendMessage(botJid, {
+                    image: { url: _THUMB },
+                    caption: startupMsg,
+                    contextInfo: {
+                      externalAdReply: {
+                        title: 'UNITY',
+                        body: '® UNITY TEAM',
+                        thumbnailUrl: _THUMB,
+                        sourceUrl: _sUrl,
+                        mediaType: 1,
+                        renderLargerThumbnail: true,
+                        showAdAttribution: true,
+                      },
+                    },
+                  }).catch(() => sock.sendMessage(botJid, { text: startupMsg }).catch(() => {}));
+
+                  // 2) Audio
+                  await sock.sendMessage(botJid, {
+                    audio: { url: _AUDIO },
+                    mimetype: 'audio/mp4',
+                    ptt: true,
+                  }).catch(() => {});
+
                   logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
 
                   // Lang select (first time only)

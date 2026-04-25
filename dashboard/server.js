@@ -81,11 +81,33 @@ app.post('/login', (req, res) => {
 app.post('/logout', (req, res) => { req.session.destroy(); res.json({ ok: true }); });
 app.get('/logout',  (req, res) => { req.session.destroy(() => res.redirect('/login.html')); });
 
+// ── Rate limiter — per-number cooldown only ───────────────────
+// 90-second cooldown per number (no IP blocking — safe for shared IPs)
+const _numCool = new Map(); // num → last request timestamp
+
+function checkRateLimit(ip, num) {
+  const now      = Date.now();
+  const NUM_COOL = 90 * 1000; // 90-second cooldown per number
+
+  const lastNum = _numCool.get(num) || 0;
+  if (now - lastNum < NUM_COOL) {
+    const wait = Math.ceil((NUM_COOL - (now - lastNum)) / 1000);
+    return { blocked: true, reason: `This number was requested recently. Please wait ${wait}s before trying again.` };
+  }
+
+  _numCool.set(num, now);
+  return { blocked: false };
+}
+
 // ── PAIR: Submit number → get pair code ───────────────────────
 app.post('/api/pair', async (req, res) => {
   const userId = (req.body.number || '').replace(/[^0-9]/g, '');
   if (userId.length < 7) return res.status(400).json({ ok: false, error: 'Invalid number' });
   if (!_sm) return res.status(503).json({ ok: false, error: 'Server not ready' });
+
+  // ── Rate limit check ─────────────────────────────────────
+  const rl = checkRateLimit(null, userId);
+  if (rl.blocked) return res.status(429).json({ ok: false, rateLimit: true, error: rl.reason });
 
   // ── Block check: blocked numbers cannot pair ──────────────
   if (blockedNumbers.has(userId)) {
@@ -308,15 +330,8 @@ app.post('/api/pair/resend-password/:number', async (req, res) => {
       `🌐 *Bot Settings Password:*\n\n` +
       `🔑  *${newPass}*\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `🇬🇧 *English:*\n` +
-      `Use this on the pair site → *Configure Bot Settings*.\n` +
+      `Use this password on the pair site → *Configure Bot Settings*.\n` +
       `⚠️ Keep this private — anyone with it can change your bot settings!\n\n` +
-      `🇱🇰 *සිංහල:*\n` +
-      `Pair site එකෙ *Configure Bot Settings* click කරාම ඕන.\n` +
-      `⚠️ මේ password *කාටවත් දෙන්න එපා!*\n\n` +
-      `🇱🇰 *தமிழ்:*\n` +
-      `Pair site-ல் *Configure Bot Settings* click செய்யும்போது தேவை.\n` +
-      `⚠️ இந்த password-ஐ *யாரிடமும் கொடுக்காதே!*\n\n` +
       `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n` +
       `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
 

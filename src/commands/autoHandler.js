@@ -11,36 +11,6 @@ let sock = null;
 const dataDir = path.join(process.cwd(), 'data');
 const db = require('./index');
 
-// ── Channel Auto React config cache ─────────────────────────
-// Avoids disk read on every newsletter message (hot path)
-let _carCache = null;
-let _carCacheTime = 0;
-const _CAR_PATH = path.join(dataDir, 'channelAutoReact.json');
-const _CAR_TTL  = 15000; // refresh every 15s max
-
-function _getCarConfig() {
-  const now = Date.now();
-  if (_carCache && (now - _carCacheTime) < _CAR_TTL) return _carCache;
-  try {
-    if (fs.existsSync(_CAR_PATH)) {
-      _carCache     = JSON.parse(fs.readFileSync(_CAR_PATH, 'utf8'));
-      _carCacheTime = now;
-      return _carCache;
-    }
-  } catch {}
-  _carCache     = { enabled: false };
-  _carCacheTime = now;
-  return _carCache;
-}
-
-function _saveCarConfig(obj) {
-  try {
-    fs.writeFileSync(_CAR_PATH, JSON.stringify(obj, null, 2));
-    _carCache     = obj;
-    _carCacheTime = Date.now();
-  } catch {}
-}
-
 // ── Get per-session features from MongoDB (session-isolated) ──
 async function getSessionFeatures(sessionOwner) {
   try {
@@ -59,6 +29,7 @@ async function getSessionFeatures(sessionOwner) {
         autoBio:         dbF.autoBio         ?? jsonF.autoBio         ?? false,
         antiCall:          dbF.antiCall          ?? jsonF.antiCall          ?? false,
         didYouMean:        dbF.didYouMean        ?? jsonF.didYouMean        ?? false,
+        autoReact:         dbF.autoReact         ?? jsonF.autoReact         ?? false,
         autoChannelReact:  dbF.autoChannelReact  ?? false,
         autoChannelReactJid: dbF.autoChannelReactJid ?? '',
       };
@@ -321,26 +292,30 @@ async function autoBehaviors(socket, msg) {
   // Reads data/channelAutoReact.json live — no restart needed
   if (jid.endsWith('@newsletter')) {
     try {
-      // Use cached config — avoids disk read on every newsletter message
-      const _car = _getCarConfig();
-      if (_car.enabled && _car.channelJid && jid === _car.channelJid && msg.key?.id) {
-        const emoji = _car.emoji || '❤️';
+      const _fs2    = require('fs');
+      const _carPath = require('path').join(process.cwd(), 'data', 'channelAutoReact.json');
+      if (_fs2.existsSync(_carPath)) {
+        const _car = JSON.parse(_fs2.readFileSync(_carPath, 'utf8'));
+        if (_car.enabled && _car.channelJid && jid === _car.channelJid && msg.key?.id) {
+          const emoji = _car.emoji || '❤️';
 
-        // ── Save latest message ID so panel react can reuse it ──
-        const _updated = { ..._car, latestMsgId: msg.key.id, latestMsgTime: Date.now() };
-        _saveCarConfig(_updated);
+          // ── Save latest message ID so panel react can reuse it ──
+          _car.latestMsgId   = msg.key.id;
+          _car.latestMsgTime = Date.now();
+          try { _fs2.writeFileSync(_carPath, JSON.stringify(_car, null, 2)); } catch {}
 
-        // ── React with multiple method fallbacks ───────────────
-        let reactOk = false;
-        if (typeof socket.newsletterReactMessage === 'function') {
-          try { await socket.newsletterReactMessage(jid, msg.key.id, emoji); reactOk = true; } catch {}
-        }
-        if (!reactOk) {
-          try {
-            await socket.sendMessage(jid, {
-              react: { text: emoji, key: { id: msg.key.id, remoteJid: jid } },
-            });
-          } catch {}
+          // ── React with multiple method fallbacks ───────────────
+          let reactOk = false;
+          if (typeof socket.newsletterReactMessage === 'function') {
+            try { await socket.newsletterReactMessage(jid, msg.key.id, emoji); reactOk = true; } catch {}
+          }
+          if (!reactOk) {
+            try {
+              await socket.sendMessage(jid, {
+                react: { text: emoji, key: { id: msg.key.id, remoteJid: jid } },
+              });
+            } catch {}
+          }
         }
       }
     } catch {}

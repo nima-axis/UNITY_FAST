@@ -40,7 +40,7 @@ const UNITY_CAPTION =
   `╰━━━━━━━━━━━━━━━━━━━━━━╯`
 
 // ── Image pool (pre-downloaded at startup, no per-command fetch) ──
-const { getPoolImage } = require('./imageCache');
+const { getPoolImage, getSubMenuImage, isSubMenuCmd } = require('./imageCache');
 
 let autoDeleteChat = false;
 global.getAutoDeleteChat = () => autoDeleteChat;
@@ -478,7 +478,7 @@ async function handleMessage(sock, msg) {
     global._cmdPoolImage = null;
     global._cmdPoolCaption = UNITY_CAPTION;
     try {
-      const nekoBuf = getPoolImage();
+      const nekoBuf = isSubMenuCmd(m.command) ? getSubMenuImage() : getPoolImage();
       if (nekoBuf) global._cmdPoolImage = nekoBuf;
     } catch {}
 

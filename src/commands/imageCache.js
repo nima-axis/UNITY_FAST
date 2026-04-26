@@ -1,234 +1,118 @@
 'use strict';
 /**
- * UNITY-MD — Image Pool Cache
+ * UNITY-MD — Image Pool Cache (Local Banner Edition)
  * ──────────────────────────────────────────────────────────────────────────
- * Bot start / restart වෙද්දි images 30ක් download කරලා database/nekopool/
- * folder එකේ save කරනවා. Command run වෙද්දි live download නෑ — pool
- * එකෙන් rotating ක්‍රමයට image buffer එකක් දෙනවා.
+ * src/media/ folder ලෙස images 3ක් serve කරනවා:
  *
- * Pool exhausted (30 දාලා ගියාට පස්සේ) වෙද්දි loop back කරනවා.
+ *   unity_banner_1.jpg  ← Main rotation (image 1 - collage)
+ *   unity_banner_2.jpg  ← Main rotation (image 2 - day scene)
+ *   unity_submenu.jpg   ← Sub menu commands විතරක් (image 3 - night scene)
+ *
+ * getPoolImage()    → banner_1 / banner_2 alternating (every other message)
+ * getSubMenuImage() → unity_submenu.jpg (sub menu commands)
+ *
+ * Network calls / external APIs — කිසිම දෙයක් නෑ.
  * ──────────────────────────────────────────────────────────────────────────
  */
 
 const path = require('path');
 const fs   = require('fs-extra');
-const axios = require('axios');
 
-const POOL_DIR  = path.join(__dirname, '../../database/nekopool');
-const POOL_SIZE = 30;          // Startup download count
-const BATCH     = 5;           // Concurrent download batch size
+const MEDIA_DIR = path.join(__dirname, '../../src/media');
 
-fs.ensureDirSync(POOL_DIR);
+// ── Image paths ──────────────────────────────────────────────
+const BANNER_IMAGES = [
+  path.join(MEDIA_DIR, 'unity_banner_1.jpg'),
+  path.join(MEDIA_DIR, 'unity_banner_2.jpg'),
+];
+const SUBMENU_IMAGE = path.join(MEDIA_DIR, 'unity_submenu.jpg');
 
-// ── Internal state ──────────────────────────────────────────
-let pool   = [];   // Ordered array of valid file paths
-let cursor = 0;    // Next image to serve
-let ready  = false;
+// ── Sub menu command list ────────────────────────────────────
+const SUB_MENU_CMDS = new Set([
+  'menu_bot', 'menu_group', 'menu_download', 'menu_ai',
+  'menu_sticker', 'menu_fun', 'menu_tools', 'menu_anime',
+  'menu_games', 'menu_protection', 'menu_privacy',
+  'menu_auto', 'menu_channel', 'menu_srilanka', 'menu_stats',
+]);
 
-// ── Helpers ─────────────────────────────────────────────────
+// ── Internal state ───────────────────────────────────────────
+let cursor = 0;
+
+// ── Helpers ──────────────────────────────────────────────────
 function isValidJpeg(buf) {
   return Buffer.isBuffer(buf) && buf.length > 2000
     && buf[0] === 0xFF && buf[1] === 0xD8;
 }
 
-/** Fetch one random image buffer, tries multiple APIs with fallback */
-async function fetchOneBuffer() {
-  const APIS = [
-    async () => {
-      const r = await axios.get('https://nekos.best/api/v2/neko',
-        { timeout: 8000 });
-      const url = r.data?.results?.[0]?.url;
-      if (!url) return null;
-      const img = await axios.get(url,
-        { responseType: 'arraybuffer', timeout: 12000 });
-      return Buffer.from(img.data);
-    },
-    async () => {
-      const r = await axios.get('https://nekos.life/api/v2/img/neko',
-        { timeout: 8000 });
-      const url = r.data?.url;
-      if (!url) return null;
-      const img = await axios.get(url,
-        { responseType: 'arraybuffer', timeout: 12000 });
-      return Buffer.from(img.data);
-    },
-    async () => {
-      const r = await axios.get('https://api.waifu.pics/sfw/neko',
-        { timeout: 8000 });
-      const url = r.data?.url;
-      if (!url) return null;
-      const img = await axios.get(url,
-        { responseType: 'arraybuffer', timeout: 12000 });
-      return Buffer.from(img.data);
-    },
-    async () => {
-      const r = await axios.get(
-        'https://api.otakugifs.xyz/gif?reaction=neko',
-        { timeout: 8000 });
-      const url = r.data?.url;
-      if (!url) return null;
-      const img = await axios.get(url,
-        { responseType: 'arraybuffer', timeout: 12000 });
-      return Buffer.from(img.data);
-    },
-  ];
-
-  for (const fn of APIS) {
-    try {
-      const buf = await fn();
-      if (isValidJpeg(buf)) return buf;
-    } catch {}
-  }
-  return null;
-}
-
-/** Download one slot, retry up to 3 times */
-async function downloadSlot(index) {
-  const filePath = path.join(
-    POOL_DIR, `pool_${String(index).padStart(3, '0')}.jpg`
-  );
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const buf = await fetchOneBuffer();
-      if (buf) {
-        await fs.outputFile(filePath, buf);
-        return filePath;
-      }
-    } catch {}
-    if (attempt < 3)
-      await new Promise(r => setTimeout(r, 1500 * attempt));
-  }
-  return null; // Failed all attempts
-}
-
-// ── Shuffle in-place (Fisher-Yates) ─────────────────────────
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
+function readImage(filePath) {
+  try {
+    const buf = fs.readFileSync(filePath);
+    return isValidJpeg(buf) ? buf : null;
+  } catch { return null; }
 }
 
 // ── Public API ───────────────────────────────────────────────
 
 /**
  * initImagePool()
- * ───────────────
- * Bot start / restart වෙද්දි call කරන්න.
- * Old pool clear කරලා 30 fresh images download කරනවා.
- * Background task ලෙස — await නොකළාත් හරි (setImmediate).
+ * Bot start / restart වෙද්දි call කරන්න — validates local files.
  */
 async function initImagePool() {
-  console.log('[imageCache] 🔄 Image pool init — downloading', POOL_SIZE, 'images...');
-
-  // Reset state first (old pool clear)
-  ready  = false;
-  pool   = [];
-  cursor = 0;
-
-  try {
-    const oldFiles = (await fs.readdir(POOL_DIR))
-      .filter(f => f.startsWith('pool_'));
-    await Promise.all(
-      oldFiles.map(f => fs.remove(path.join(POOL_DIR, f)).catch(() => {}))
-    );
-  } catch {}
-
-  // Download in batches to avoid hammering APIs
-  let downloaded = 0;
-  for (let i = 0; i < POOL_SIZE; i += BATCH) {
-    const batch = [];
-    for (let j = i; j < Math.min(i + BATCH, POOL_SIZE); j++) {
-      batch.push(downloadSlot(j));
+  console.log('[imageCache] Loading Unity banner images from src/media/...');
+  let found = 0;
+  for (const p of [...BANNER_IMAGES, SUBMENU_IMAGE]) {
+    const buf = readImage(p);
+    if (buf) {
+      console.log(`[imageCache]  OK: ${path.basename(p)} (${buf.length} bytes)`);
+      found++;
+    } else {
+      console.warn(`[imageCache]  Missing/invalid: ${path.basename(p)}`);
     }
-    const results = await Promise.all(batch);
-    for (const fp of results) {
-      if (fp) {
-        pool.push(fp);
-        downloaded++;
-      }
-    }
-    console.log(`[imageCache]  ↳ ${downloaded}/${POOL_SIZE} done`);
-    // Small pause between batches
-    if (i + BATCH < POOL_SIZE)
-      await new Promise(r => setTimeout(r, 400));
   }
-
-  // Shuffle so each restart serves images in a different order
-  shuffle(pool);
-
   cursor = 0;
-  ready  = pool.length > 0;
-
-  if (ready) {
-    console.log(`[imageCache] ✅ Pool ready — ${pool.length} images, randomised order`);
-  } else {
-    console.warn('[imageCache] ⚠️  Pool empty — all downloads failed');
-  }
-}
-
-// ── Fallback: menucards images (always available locally) ───
-const MENUCARD_DIR = path.join(__dirname, '../../database/menucards');
-let menucardFiles  = [];
-let menucardCursor = 0;
-
-function loadMenucardFallback() {
-  try {
-    menucardFiles = fs.readdirSync(MENUCARD_DIR)
-      .filter(f => /^menu_\d+\.jpg$/.test(f))
-      .map(f => path.join(MENUCARD_DIR, f));
-    shuffle(menucardFiles);
-  } catch { menucardFiles = []; }
-}
-loadMenucardFallback(); // Load once at startup
-
-function getMenucardFallback() {
-  if (!menucardFiles.length) loadMenucardFallback();
-  if (!menucardFiles.length) return null;
-  // Rotate through menucards
-  for (let i = 0; i < menucardFiles.length; i++) {
-    const fp  = menucardFiles[menucardCursor % menucardFiles.length];
-    menucardCursor = (menucardCursor + 1) % menucardFiles.length;
-    try {
-      const buf = fs.readFileSync(fp);
-      if (isValidJpeg(buf)) return buf;
-    } catch {}
-  }
-  return null;
+  console.log(`[imageCache] Ready — ${found}/3 images available`);
 }
 
 /**
  * getPoolImage()
- * ──────────────
- * Returns a Buffer from the local pool (rotating). Never does a network call.
- * Falls back to menucards/ images if pool is empty or not ready.
+ * Main rotation: unity_banner_1.jpg ↔ unity_banner_2.jpg alternating.
  */
 function getPoolImage() {
-  // Primary: downloaded neko pool
-  if (ready && pool.length > 0) {
-    const start = cursor;
-    do {
-      const fp = pool[cursor % pool.length];
-      cursor   = (cursor + 1) % pool.length;
-      try {
-        const buf = fs.readFileSync(fp);
-        if (isValidJpeg(buf)) return buf;
-        pool.splice(pool.indexOf(fp), 1);
-        if (pool.length === 0) { ready = false; break; }
-        cursor = cursor % pool.length;
-      } catch {
-        pool.splice(pool.indexOf(fp), 1);
-        if (pool.length === 0) { ready = false; break; }
-        cursor = cursor % pool.length;
-      }
-    } while (cursor !== start % pool.length && pool.length > 0);
+  for (let i = 0; i < BANNER_IMAGES.length; i++) {
+    const idx = (cursor + i) % BANNER_IMAGES.length;
+    const buf = readImage(BANNER_IMAGES[idx]);
+    if (buf) {
+      cursor = (idx + 1) % BANNER_IMAGES.length;
+      return buf;
+    }
   }
-
-  // Fallback: local menucards (always available, no network needed)
-  return getMenucardFallback();
+  console.warn('[imageCache] Both banner images unavailable');
+  return null;
 }
 
-/** isPoolReady() — pool download complete and has images */
-function isPoolReady() { return ready || menucardFiles.length > 0; }
+/**
+ * getSubMenuImage()
+ * Sub menu commands විතරයි — unity_submenu.jpg.
+ * Fallback: getPoolImage() (banner rotation).
+ */
+function getSubMenuImage() {
+  const buf = readImage(SUBMENU_IMAGE);
+  if (buf) return buf;
+  console.warn('[imageCache] Submenu image unavailable, using banner fallback');
+  return getPoolImage();
+}
 
-module.exports = { initImagePool, getPoolImage, isPoolReady };
+/**
+ * isSubMenuCmd(cmd)
+ * messageHandler ලෙස command check කරන්න.
+ */
+function isSubMenuCmd(cmd) {
+  return SUB_MENU_CMDS.has(cmd);
+}
+
+/** isPoolReady() */
+function isPoolReady() {
+  return [...BANNER_IMAGES, SUBMENU_IMAGE].some(p => readImage(p) !== null);
+}
+
+module.exports = { initImagePool, getPoolImage, getSubMenuImage, isSubMenuCmd, isPoolReady };

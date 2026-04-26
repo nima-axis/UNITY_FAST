@@ -575,6 +575,28 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
 .cat-on:hover{background:rgba(37,211,102,0.2)}
 .cat-off{background:rgba(255,71,87,0.06);border-color:rgba(255,71,87,0.2);color:var(--red)}
 .cat-off:hover{background:rgba(255,71,87,0.15)}
+
+/* ═══ LANGUAGE SWITCHER ═══ */
+#lang-sw{
+  position:fixed;top:18px;left:50%;transform:translateX(-50%);
+  z-index:300;display:flex;gap:3px;
+  background:rgba(4,8,18,0.92);backdrop-filter:blur(20px);
+  border:1px solid rgba(37,211,102,0.2);border-radius:32px;padding:4px;
+  box-shadow:0 4px 28px rgba(0,0,0,0.5),0 0 0 1px rgba(37,211,102,0.05);
+}
+.lbtn{
+  padding:5px 13px;border-radius:26px;border:1px solid transparent;
+  background:transparent;color:rgba(74,82,128,0.8);
+  font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:700;
+  cursor:pointer;transition:all .2s;letter-spacing:.5px;white-space:nowrap;
+}
+.lbtn.active{
+  background:rgba(37,211,102,0.14);color:var(--g1);
+  border-color:rgba(37,211,102,0.4);
+  box-shadow:0 0 12px rgba(37,211,102,0.12);
+}
+.lbtn:hover:not(.active){color:var(--text);background:rgba(255,255,255,0.04)}
+
 </style>
 </head>
 <body>
@@ -587,11 +609,11 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
 <!-- PLAY OVERLAY -->
 <div id="play-overlay">
   <div class="ov-logo">UNITY-MD</div>
-  <div class="ov-sub">® Unity Team • Sri Lanka 🇱🇰</div>
+  <div class="ov-sub" data-i18n="ov-sub">® Unity Team • Sri Lanka 🇱🇰</div>
   <div class="ov-ring" onclick="startAudio()">
     <div class="ov-btn">▶</div>
   </div>
-  <div class="ov-label">Tap to enter the experience</div>
+  <div class="ov-label" data-i18n="ov-label">Tap to enter the experience</div>
   <div class="ov-bars">
     <div class="ov-bar"></div><div class="ov-bar"></div>
     <div class="ov-bar"></div><div class="ov-bar"></div>
@@ -605,6 +627,13 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
     <div class="bar"></div><div class="bar"></div>
     <div class="bar"></div><div class="bar"></div>
   </div>
+</div>
+
+<!-- LANGUAGE SWITCHER -->
+<div id="lang-sw">
+  <button class="lbtn active" onclick="setLang('en')">EN</button>
+  <button class="lbtn" onclick="setLang('si')">සිංහල</button>
+  <button class="lbtn" onclick="setLang('ta')">தமிழ்</button>
 </div>
 
 <!-- BACKGROUNDS -->
@@ -634,7 +663,7 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
       <div class="logo-icon-wrap">🧲</div>
     </div>
     <div class="hero-title">UNITY-MD</div>
-    <div class="hero-sub">® Unity Team • WhatsApp Bot Platform</div>
+    <div class="hero-sub" data-i18n="hero-sub">® Unity Team • WhatsApp Bot Platform</div>
 
     <!-- Typewriter box -->
     <div class="tw-box style-green" id="tw-box">
@@ -644,28 +673,28 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
 
   <!-- STATS -->
   <div class="stats">
-    <div class="stat"><div class="stat-val" id="cnt-on">—</div><div class="stat-lbl">Online</div></div>
-    <div class="stat"><div class="stat-val" id="cnt-usr">—</div><div class="stat-lbl">Users</div></div>
-    <div class="stat"><div class="stat-val" id="cnt-grp">—</div><div class="stat-lbl">Groups</div></div>
+    <div class="stat"><div class="stat-val" id="cnt-on">—</div><div class="stat-lbl" data-i18n="stat-online">Online</div></div>
+    <div class="stat"><div class="stat-val" id="cnt-usr">—</div><div class="stat-lbl" data-i18n="stat-users">Users</div></div>
+    <div class="stat"><div class="stat-val" id="cnt-grp">—</div><div class="stat-lbl" data-i18n="stat-groups">Groups</div></div>
   </div>
 
   <!-- FEATURE CHIPS -->
   <div class="features-strip">
     <div class="feat-chip">
       <span class="feat-chip-icon">🤖</span>
-      <div><div class="feat-chip-name">AI Powered</div><div class="feat-chip-val">Gemini Pro</div></div>
+      <div><div class="feat-chip-name" data-i18n="feat-ai-name">AI Powered</div><div class="feat-chip-val" data-i18n="feat-ai-val">Gemini Pro</div></div>
     </div>
     <div class="feat-chip">
       <span class="feat-chip-icon">⚡</span>
-      <div><div class="feat-chip-name">660+ Commands</div><div class="feat-chip-val">All categories</div></div>
+      <div><div class="feat-chip-name" data-i18n="feat-cmd-name">660+ Commands</div><div class="feat-chip-val" data-i18n="feat-cmd-val">All categories</div></div>
     </div>
     <div class="feat-chip">
       <span class="feat-chip-icon">🛡️</span>
-      <div><div class="feat-chip-name">Full Protection</div><div class="feat-chip-val">Anti-spam & raid</div></div>
+      <div><div class="feat-chip-name" data-i18n="feat-prot-name">Full Protection</div><div class="feat-chip-val" data-i18n="feat-prot-val">Anti-spam & raid</div></div>
     </div>
     <div class="feat-chip">
       <span class="feat-chip-icon">🇱🇰</span>
-      <div><div class="feat-chip-name">Sri Lanka Built</div><div class="feat-chip-val">Cinesubz & more</div></div>
+      <div><div class="feat-chip-name" data-i18n="feat-sl-name">Sri Lanka Built</div><div class="feat-chip-val" data-i18n="feat-sl-val">Cinesubz & more</div></div>
     </div>
   </div>
 
@@ -674,36 +703,51 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
     <div class="card-head">
       <div class="card-icon">🔗</div>
       <div>
-        <div class="card-title">Connect Your WhatsApp</div>
-        <div class="card-subtitle">No QR scan needed — instant pairing code</div>
+        <div class="card-title" data-i18n="card-title">Connect Your WhatsApp</div>
+        <div class="card-subtitle" data-i18n="card-subtitle">No QR scan needed — instant pairing code</div>
       </div>
     </div>
 
     <!-- Visitor Info Panel -->
     <div class="vinfo-panel">
-      <div class="vinfo-head">🖥️ Your Device Info</div>
+      <div class="vinfo-head" data-i18n="vinfo-head">🖥️ Your Device Info</div>
       <div class="vinfo-grid">
+
+        <!-- IP + Country (full width) -->
         <div class="vinfo-item full">
           <div class="vinfo-icon">🌐</div>
           <div style="flex:1;min-width:0">
-            <div class="vinfo-label">IP Address</div>
+            <div class="vinfo-label" data-i18n="vinfo-ip">IP Address</div>
             <div class="vinfo-val loading" id="vi-ip">Fetching…</div>
           </div>
-          <div style="font-size:.62rem;font-family:'JetBrains Mono',monospace;color:var(--sub);white-space:nowrap;text-align:right" id="vi-ctry"></div>
+          <div style="font-size:.62rem;font-family:'JetBrains Mono',monospace;color:var(--sub);white-space:nowrap;text-align:right;line-height:1.6" id="vi-ctry"></div>
         </div>
+
+        <!-- ISP -->
+        <div class="vinfo-item full">
+          <div class="vinfo-icon">🏢</div>
+          <div style="flex:1;min-width:0">
+            <div class="vinfo-label" data-i18n="vinfo-isp">ISP / Provider</div>
+            <div class="vinfo-val loading" id="vi-isp">Fetching…</div>
+          </div>
+        </div>
+
+        <!-- Battery -->
         <div class="vinfo-item">
           <div class="vinfo-icon">🔋</div>
           <div style="flex:1">
-            <div class="vinfo-label">Battery</div>
+            <div class="vinfo-label" data-i18n="vinfo-battery">Battery</div>
             <div class="vinfo-val loading" id="vi-batt">—</div>
             <div class="batt-bar-wrap"><div class="batt-bar-fill" id="vi-bfill" style="width:0%"></div></div>
             <div class="batt-status-txt" id="vi-bst"></div>
           </div>
         </div>
+
+        <!-- Network -->
         <div class="vinfo-item">
           <div class="vinfo-icon">📶</div>
           <div style="flex:1">
-            <div class="vinfo-label">Network</div>
+            <div class="vinfo-label" data-i18n="vinfo-network">Network</div>
             <div class="vinfo-val loading" id="vi-net">—</div>
             <div class="signal-dots" id="vi-sig">
               <div class="sdot-b" style="height:4px"></div>
@@ -714,20 +758,97 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
             </div>
           </div>
         </div>
+
+        <!-- Platform / OS -->
         <div class="vinfo-item">
           <div class="vinfo-icon">💻</div>
           <div style="flex:1">
-            <div class="vinfo-label">Platform</div>
+            <div class="vinfo-label" data-i18n="vinfo-platform">Platform</div>
             <div class="vinfo-val" id="vi-plat">—</div>
           </div>
         </div>
+
+        <!-- Browser -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">🌍</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-browser">Browser</div>
+            <div class="vinfo-val" id="vi-browser">—</div>
+          </div>
+        </div>
+
+        <!-- Screen -->
         <div class="vinfo-item">
           <div class="vinfo-icon">📐</div>
           <div style="flex:1">
-            <div class="vinfo-label">Screen</div>
+            <div class="vinfo-label" data-i18n="vinfo-screen">Screen</div>
             <div class="vinfo-val" id="vi-scr">—</div>
           </div>
         </div>
+
+        <!-- Language -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">🗣️</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-language">Language</div>
+            <div class="vinfo-val" id="vi-lang">—</div>
+          </div>
+        </div>
+
+        <!-- Timezone -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">🕐</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-timezone">Timezone</div>
+            <div class="vinfo-val" id="vi-tz">—</div>
+          </div>
+        </div>
+
+        <!-- Local Time -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">⏰</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-localtime">Local Time</div>
+            <div class="vinfo-val" id="vi-time">—</div>
+          </div>
+        </div>
+
+        <!-- CPU Cores -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">⚙️</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-cpu">CPU Cores</div>
+            <div class="vinfo-val" id="vi-cpu">—</div>
+          </div>
+        </div>
+
+        <!-- RAM -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">🧠</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-ram">Device RAM</div>
+            <div class="vinfo-val" id="vi-ram">—</div>
+          </div>
+        </div>
+
+        <!-- Touch Support -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">👆</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-touch">Touch Points</div>
+            <div class="vinfo-val" id="vi-touch">—</div>
+          </div>
+        </div>
+
+        <!-- Online Status -->
+        <div class="vinfo-item">
+          <div class="vinfo-icon">🟢</div>
+          <div style="flex:1">
+            <div class="vinfo-label" data-i18n="vinfo-status">Status</div>
+            <div class="vinfo-val" id="vi-online">—</div>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -741,7 +862,7 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
             <span class="cc-arrow">▼</span>
           </div>
           <div class="cc-dropdown" id="ccDropdown">
-            <input class="cc-search" id="ccSearch" type="text" placeholder="Search country…" oninput="filterCC(this.value)" autocomplete="off">
+            <input class="cc-search" id="ccSearch" type="text" placeholder="Search country…" data-i18n-ph="cc-search-ph" oninput="filterCC(this.value)" autocomplete="off">
             <div class="cc-list" id="ccList"></div>
           </div>
         </div>
@@ -749,19 +870,19 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
           <input type="text" id="numIn" placeholder="7X XXX XXXX" maxlength="13" inputmode="numeric" style="border-radius:12px;width:100%">
           <div class="phone-preview">Full: <span id="previewNum">+94…</span></div>
         </div>
-        <button class="btn" id="pairBtn" onclick="startPair()">Get Code</button>
+        <button class="btn" id="pairBtn" onclick="startPair()" data-i18n="btn-pair">Get Code</button>
       </div>
       <div class="err-msg" id="err-msg"></div>
     </div>
 
     <div class="blocked-msg" id="blk-msg">
       <div class="blocked-icon">🔒</div>
-      <div class="blocked-title">Number Blocked</div>
-      <div class="blocked-text">This number has been blocked by the admin.<br>Please contact support to unblock your number.</div>
+      <div class="blocked-title" data-i18n="blk-title">Number Blocked</div>
+      <div class="blocked-text" data-i18n-html="blk-text">This number has been blocked by the admin.<br>Please contact support to unblock your number.</div>
     </div>
 
     <div class="code-box" id="code-box">
-      <div class="code-label">Your Pairing Code</div>
+      <div class="code-label" data-i18n="code-label">Your Pairing Code</div>
       <div class="code-digits" id="code-digits">
         <div class="digit-group" id="dg1">
           <div class="digit" id="d0">-</div><div class="digit" id="d1">-</div>
@@ -774,43 +895,43 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
         </div>
       </div>
       <div class="code-timer" id="code-timer"></div>
-      <button class="copy-btn" id="copy-btn" onclick="copyCode()">📋 Copy Code</button>
-      <div class="code-hint">
+      <button class="copy-btn" id="copy-btn" onclick="copyCode()" data-i18n="copy-btn">📋 Copy Code</button>
+      <div class="code-hint" data-i18n-html="code-hint">
         Open WhatsApp → <strong>Settings → Linked Devices</strong><br>
         → <strong>Link a Device</strong> → Enter this code ✅
       </div>
       <div>
         <span class="sbadge sb-pair" id="status-badge">
           <span class="sdot pulse"></span>
-          <span id="status-txt">Waiting for scan...</span>
+          <span id="status-txt" data-i18n="status-waiting">Waiting for scan...</span>
         </span>
       </div>
     </div>
 
     <div class="success-box" id="success-box">
       <span class="success-icon">🎉</span>
-      <div class="success-title">Bot is Active!</div>
+      <div class="success-title" data-i18n="success-title">Bot is Active!</div>
       <div class="success-num" id="success-num"></div>
-      <div class="success-msg">Send <strong style="color:var(--g1)">.menu</strong> on WhatsApp to get started.</div>
-      <button class="btn btn-full" onclick="openSettings()">⚙️ Configure Bot Settings</button>
-      <button class="btn btn-full btn-ghost" onclick="resetForm()">Connect Another Number</button>
+      <div class="success-msg" data-i18n-html="success-msg">Send <strong style="color:var(--g1)">.menu</strong> on WhatsApp to get started.</div>
+      <button class="btn btn-full" onclick="openSettings()" data-i18n="btn-settings">⚙️ Configure Bot Settings</button>
+      <button class="btn btn-full btn-ghost" onclick="resetForm()" data-i18n="btn-reset">Connect Another Number</button>
     </div>
 
     <div class="steps" id="steps">
       <div class="ghr"></div>
-      <div class="step"><div class="step-n">1</div><div class="step-t"><strong>Enter your number</strong> with country code (e.g. 94771234567)</div></div>
-      <div class="step"><div class="step-n">2</div><div class="step-t"><strong>Click Get Code</strong> and wait a few seconds</div></div>
-      <div class="step"><div class="step-n">3</div><div class="step-t">Go to WhatsApp → <strong>Settings → Linked Devices → Link a Device</strong></div></div>
-      <div class="step"><div class="step-n">4</div><div class="step-t"><strong>Enter the 8-digit code</strong> — your bot activates instantly ⚡</div></div>
+      <div class="step"><div class="step-n">1</div><div class="step-t" data-i18n-html="step1"><strong>Enter your number</strong> with country code (e.g. 94771234567)</div></div>
+      <div class="step"><div class="step-n">2</div><div class="step-t" data-i18n-html="step2"><strong>Click Get Code</strong> and wait a few seconds</div></div>
+      <div class="step"><div class="step-n">3</div><div class="step-t" data-i18n-html="step3">Go to WhatsApp → <strong>Settings → Linked Devices → Link a Device</strong></div></div>
+      <div class="step"><div class="step-n">4</div><div class="step-t" data-i18n-html="step4"><strong>Enter the 8-digit code</strong> — your bot activates instantly ⚡</div></div>
     </div>
   </div>
 
   <!-- COMMUNITY CARD -->
   <div class="community">
-    <div class="community-title">Connect With Us</div>
+    <div class="community-title" data-i18n="community-title">Connect With Us</div>
 
     <!-- Owners -->
-    <div style="font-size:.6rem;color:var(--sub);letter-spacing:3px;text-transform:uppercase;font-family:'JetBrains Mono',monospace;margin-bottom:12px">🧑‍💻 Our Team — Click to Chat</div>
+    <div style="font-size:.6rem;color:var(--sub);letter-spacing:3px;text-transform:uppercase;font-family:'JetBrains Mono',monospace;margin-bottom:12px" data-i18n="team-label">🧑‍💻 Our Team — Click to Chat</div>
     <div class="owners-grid">
       <a class="owner-card" href="https://wa.me/94726800969" target="_blank">
         <div class="owner-avatar">👑</div>
@@ -850,16 +971,16 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
       <a class="social-btn group" href="https://chat.whatsapp.com/ICbmjTyqQC21JdQRGwc77t" target="_blank">
         <div class="social-btn-icon">👥</div>
         <div class="social-btn-info">
-          <div class="social-btn-title">Join Our Group</div>
-          <div class="social-btn-desc">UNITY-MD Community • Support & Updates</div>
+          <div class="social-btn-title" data-i18n="grp-title">Join Our Group</div>
+          <div class="social-btn-desc" data-i18n="grp-desc">UNITY-MD Community • Support & Updates</div>
         </div>
         <div class="social-btn-arrow">→</div>
       </a>
       <a class="social-btn channel" href="https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l" target="_blank">
         <div class="social-btn-icon">📢</div>
         <div class="social-btn-info">
-          <div class="social-btn-title">Follow Our Channel</div>
-          <div class="social-btn-desc">Latest news, features & announcements</div>
+          <div class="social-btn-title" data-i18n="ch-title">Follow Our Channel</div>
+          <div class="social-btn-desc" data-i18n="ch-desc">Latest news, features & announcements</div>
         </div>
         <div class="social-btn-arrow">→</div>
       </a>
@@ -868,8 +989,8 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
 
   <!-- FOOTER -->
   <div class="footer">
-    <div>Powered by <a href="#">UNITY-MD</a> &nbsp;•&nbsp; ® Unity Team Sri Lanka 🇱🇰</div>
-    <div style="margin-top:6px;opacity:.5">660+ commands &nbsp;•&nbsp; 99,999+ bots supported</div>
+    <div data-i18n-html="footer-main">Powered by <a href="#">UNITY-MD</a> &nbsp;•&nbsp; ® Unity Team Sri Lanka 🇱🇰</div>
+    <div style="margin-top:6px;opacity:.5" data-i18n="footer-sub">660+ commands &nbsp;•&nbsp; 99,999+ bots supported</div>
     <div class="footer-dots">
       <div class="fdot"></div><div class="fdot"></div><div class="fdot"></div>
       <div class="fdot"></div><div class="fdot"></div>
@@ -883,28 +1004,28 @@ input[type=text]::placeholder{color:rgba(74,82,128,0.6)}
   <div style="max-width:560px;margin:0 auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px">
       <div>
-        <div style="font-family:'Orbitron',monospace;font-size:1.1rem;font-weight:900;letter-spacing:2px;color:var(--g1)">⚙️ BOT SETTINGS</div>
+        <div style="font-family:'Orbitron',monospace;font-size:1.1rem;font-weight:900;letter-spacing:2px;color:var(--g1)" data-i18n="settings-title">⚙️ BOT SETTINGS</div>
         <div id="cfg-num" style="font-size:.72rem;color:var(--sub);font-family:'JetBrains Mono',monospace;margin-top:3px"></div>
       </div>
-      <button onclick="closeSettings()" style="background:rgba(255,71,87,0.08);border:1px solid rgba(255,71,87,0.2);color:var(--red);border-radius:10px;padding:8px 16px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:.85rem">✕ Close</button>
+      <button onclick="closeSettings()" style="background:rgba(255,71,87,0.08);border:1px solid rgba(255,71,87,0.2);color:var(--red);border-radius:10px;padding:8px 16px;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:.85rem" data-i18n="settings-close">✕ Close</button>
     </div>
     <div id="save-bar" style="display:none;position:sticky;top:0;z-index:10;background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.25);border-radius:14px;padding:12px 18px;margin-bottom:18px;align-items:center;justify-content:space-between;gap:12px">
-      <span style="font-size:.82rem;color:var(--g1)">⚠️ Unsaved changes — bot will restart after save</span>
-      <button id="save-btn" onclick="saveSettings()" style="background:linear-gradient(135deg,var(--g1),#00c853);color:#fff;border:none;border-radius:10px;padding:9px 22px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:.85rem;white-space:nowrap">💾 Save & Restart</button>
+      <span style="font-size:.82rem;color:var(--g1)" data-i18n="settings-unsaved">⚠️ Unsaved changes — bot will restart after save</span>
+      <button id="save-btn" onclick="saveSettings()" style="background:linear-gradient(135deg,var(--g1),#00c853);color:#fff;border:none;border-radius:10px;padding:9px 22px;font-weight:700;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:.85rem;white-space:nowrap" data-i18n="settings-save">💾 Save & Restart</button>
     </div>
-    <div id="cfg-loading" style="text-align:center;padding:60px;color:var(--sub);font-family:'JetBrains Mono',monospace;font-size:.85rem">Loading settings...</div>
+    <div id="cfg-loading" style="text-align:center;padding:60px;color:var(--sub);font-family:'JetBrains Mono',monospace;font-size:.85rem" data-i18n="cfg-loading">Loading settings...</div>
     <div id="cfg-body" style="display:none">
       <div style="background:rgba(6,10,20,0.9);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:14px">
-        <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:3px;color:var(--sub);margin-bottom:14px;font-family:'JetBrains Mono',monospace">🤖 Bot Mode</div>
+        <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:3px;color:var(--sub);margin-bottom:14px;font-family:'JetBrains Mono',monospace" data-i18n="cfg-bot-mode">🤖 Bot Mode</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="mode-btn" data-mode="public"  onclick="setMode('public')"  >🌐 Public</button>
-          <button class="mode-btn" data-mode="group"   onclick="setMode('group')"   >👥 Group Only</button>
-          <button class="mode-btn" data-mode="inbox"   onclick="setMode('inbox')"   >📩 Inbox Only</button>
-          <button class="mode-btn" data-mode="private" onclick="setMode('private')" >🔒 Private</button>
+          <button class="mode-btn" data-mode="public"  onclick="setMode('public')"  data-i18n="mode-public">🌐 Public</button>
+          <button class="mode-btn" data-mode="group"   onclick="setMode('group')"   data-i18n="mode-group">👥 Group Only</button>
+          <button class="mode-btn" data-mode="inbox"   onclick="setMode('inbox')"   data-i18n="mode-inbox">📩 Inbox Only</button>
+          <button class="mode-btn" data-mode="private" onclick="setMode('private')" data-i18n="mode-private">🔒 Private</button>
         </div>
       </div>
       <div style="background:rgba(6,10,20,0.9);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:14px">
-        <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:3px;color:var(--sub);margin-bottom:14px;font-family:'JetBrains Mono',monospace">⚡ Auto Features</div>
+        <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:3px;color:var(--sub);margin-bottom:14px;font-family:'JetBrains Mono',monospace" data-i18n="cfg-auto-feat">⚡ Auto Features</div>
         <div id="features-list"></div>
       </div>
       <div id="cmd-groups"></div>
@@ -961,52 +1082,154 @@ document.getElementById('numIn').addEventListener('input',updatePreview);
 
 /* ─── VISITOR INFO ─── */
 (function(){
-  var ua=navigator.userAgent;
-  var plat='/Android/i'.test(ua)?'Android 📱':'/iPhone|iPad/i'.test(ua)?'iOS 📱':'/Windows/i'.test(ua)?'Windows 🖥️':'/Mac/i'.test(ua)?'macOS 💻':'/Linux/i'.test(ua)?'Linux 🐧':'Unknown';
-  if(/Android/i.test(ua))plat='Android 📱';
-  else if(/iPhone|iPad|iPod/i.test(ua))plat='iOS 📱';
-  else if(/Windows/i.test(ua))plat='Windows 🖥️';
-  else if(/Mac/i.test(ua))plat='macOS 💻';
-  else if(/Linux/i.test(ua))plat='Linux 🐧';
-  document.getElementById('vi-plat').textContent=plat;
-  document.getElementById('vi-scr').textContent=screen.width+'×'+screen.height;
-  // IP
-  fetch('https://api.ipify.org?format=json').then(r=>r.json()).then(d=>{
-    document.getElementById('vi-ip').textContent=d.ip||'N/A';
-    document.getElementById('vi-ip').classList.remove('loading');
-    return fetch('https://ip-api.com/json/'+d.ip+'?fields=country,countryCode');
-  }).then(r=>r.json()).then(d=>{
-    if(d&&d.country)document.getElementById('vi-ctry').textContent='🌍 '+d.country;
-  }).catch(()=>{document.getElementById('vi-ip').textContent='Unavailable';document.getElementById('vi-ip').classList.remove('loading');});
-  // Battery
-  if(navigator.getBattery){navigator.getBattery().then(b=>{
-    function upd(){
-      var pct=Math.round(b.level*100);
-      document.getElementById('vi-batt').textContent=pct+'%';
-      document.getElementById('vi-batt').classList.remove('loading');
-      var fill=document.getElementById('vi-bfill');
-      fill.style.width=pct+'%';
-      fill.style.background=pct>60?'var(--g1)':pct>25?'var(--amber)':'var(--red)';
-      var st=document.getElementById('vi-bst');
-      if(b.charging){st.textContent='⚡ Charging';st.className='batt-status-txt charging';}
-      else{var m=Math.round(b.dischargingTime/60);st.textContent=isFinite(m)?'~'+m+'min left':'Discharging';st.className='batt-status-txt';}
+  // ── Sync / instant fields ──
+  var ua = navigator.userAgent;
+
+  // Platform
+  var plat = 'Unknown';
+  if (/Android/i.test(ua)) plat = 'Android 📱';
+  else if (/iPhone|iPad|iPod/i.test(ua)) plat = 'iOS 📱';
+  else if (/Windows NT/i.test(ua)) plat = 'Windows 🖥️';
+  else if (/Macintosh|Mac OS X/i.test(ua)) plat = 'macOS 💻';
+  else if (/Linux/i.test(ua)) plat = 'Linux 🐧';
+  set('vi-plat', plat);
+
+  // Browser
+  var br = 'Unknown';
+  if (/Edg\//i.test(ua)) br = 'Edge';
+  else if (/OPR|Opera/i.test(ua)) br = 'Opera';
+  else if (/Chrome/i.test(ua)) br = 'Chrome';
+  else if (/Firefox/i.test(ua)) br = 'Firefox';
+  else if (/Safari/i.test(ua)) br = 'Safari';
+  else if (/MSIE|Trident/i.test(ua)) br = 'IE';
+  set('vi-browser', br);
+
+  // Screen
+  set('vi-scr', screen.width + '×' + screen.height + ' (' + (window.devicePixelRatio||1) + 'x)');
+
+  // Language
+  set('vi-lang', navigator.language || navigator.userLanguage || 'Unknown');
+
+  // Timezone
+  try { set('vi-tz', Intl.DateTimeFormat().resolvedOptions().timeZone); } catch(e) { set('vi-tz','Unknown'); }
+
+  // CPU cores
+  set('vi-cpu', (navigator.hardwareConcurrency || 'N/A') + (navigator.hardwareConcurrency ? ' cores' : ''));
+
+  // RAM
+  set('vi-ram', navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'N/A');
+
+  // Touch
+  var tp = navigator.maxTouchPoints || 0;
+  set('vi-touch', tp > 0 ? tp + ' points ✅' : 'None ❌');
+
+  // Online
+  set('vi-online', navigator.onLine ? '🟢 Online' : '🔴 Offline');
+  window.addEventListener('online',  function(){ set('vi-online','🟢 Online'); });
+  window.addEventListener('offline', function(){ set('vi-online','🔴 Offline'); });
+
+  // Live clock
+  function tickClock(){
+    var now = new Date();
+    set('vi-time', now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+  }
+  tickClock(); setInterval(tickClock, 1000);
+
+  // ── Network ──
+  var conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (conn) {
+    function updateNet(){
+      var tm = {'4g':'4G LTE','3g':'3G','2g':'2G','slow-2g':'2G Slow','wifi':'WiFi','ethernet':'Ethernet'};
+      var t = conn.effectiveType || conn.type || '';
+      var label = tm[t] || (t ? t.toUpperCase() : 'Online');
+      if (conn.downlink) label += ' · ' + conn.downlink + ' Mbps';
+      set('vi-net', label);
+      var bars = {'4g':5,'3g':3,'2g':2,'slow-2g':1,'wifi':5,'ethernet':5};
+      var ab = bars[t] || (navigator.onLine ? 4 : 0);
+      document.querySelectorAll('.sdot-b').forEach(function(b,i){ b.classList.toggle('on', i < ab); });
     }
-    upd();b.addEventListener('levelchange',upd);b.addEventListener('chargingchange',upd);
-  });}else{document.getElementById('vi-batt').textContent='N/A';document.getElementById('vi-batt').classList.remove('loading');var f=document.getElementById('vi-bfill');f.style.width='100%';f.style.background='rgba(74,82,128,0.3)';}
-  // Network
-  var conn=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
-  if(conn){
-    var tm={'4g':'4G LTE','3g':'3G','2g':'2G','slow-2g':'2G Slow','wifi':'WiFi','ethernet':'Ethernet'};
-    var t=conn.effectiveType||conn.type||'online';
-    document.getElementById('vi-net').textContent=(tm[t]||t.toUpperCase())+(conn.downlink?' · '+conn.downlink+'Mbps':'');
-    document.getElementById('vi-net').classList.remove('loading');
-    var bv={'4g':5,'3g':3,'2g':2,'slow-2g':1,'wifi':5,'ethernet':5};
-    var ab=bv[t]||3;
-    document.querySelectorAll('.sdot-b').forEach((b,i)=>{if(i<ab)b.classList.add('on');});
-  }else{
-    document.getElementById('vi-net').textContent=navigator.onLine?'Online':'Offline';
-    document.getElementById('vi-net').classList.remove('loading');
-    if(navigator.onLine)document.querySelectorAll('.sdot-b').forEach(b=>b.classList.add('on'));
+    updateNet();
+    conn.addEventListener('change', updateNet);
+  } else {
+    set('vi-net', navigator.onLine ? 'Online' : 'Offline');
+    if (navigator.onLine) document.querySelectorAll('.sdot-b').forEach(function(b){ b.classList.add('on'); });
+  }
+
+  // ── Battery ──
+  if (navigator.getBattery) {
+    navigator.getBattery().then(function(b){
+      function upd(){
+        var pct = Math.round(b.level * 100);
+        set('vi-batt', pct + '%');
+        var fill = document.getElementById('vi-bfill');
+        if (fill) { fill.style.width = pct + '%'; fill.style.background = pct>60?'var(--g1)':pct>25?'var(--amber)':'var(--red)'; }
+        var st = document.getElementById('vi-bst');
+        if (st) {
+          if (b.charging) { st.textContent = '⚡ Charging'; st.className = 'batt-status-txt charging'; }
+          else { var m = Math.round(b.dischargingTime/60); st.textContent = isFinite(m) ? '~'+m+'min left' : 'Discharging'; st.className = 'batt-status-txt'; }
+        }
+      }
+      upd();
+      b.addEventListener('levelchange', upd);
+      b.addEventListener('chargingchange', upd);
+    }).catch(function(){ set('vi-batt','N/A'); });
+  } else {
+    set('vi-batt', 'N/A');
+    var f = document.getElementById('vi-bfill');
+    if (f) { f.style.width='100%'; f.style.background='rgba(74,82,128,0.3)'; }
+    var bs = document.getElementById('vi-bst');
+    if (bs) { bs.textContent = 'Not supported'; }
+  }
+
+  // ── IP + ISP + Country (multiple fallback APIs) ──
+  function tryIP(apis, idx) {
+    if (idx >= apis.length) { set('vi-ip','Unavailable'); set('vi-isp','Unavailable'); return; }
+    fetch(apis[idx].url)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var ip  = apis[idx].ip(d);
+        var isp = apis[idx].isp(d);
+        var country = apis[idx].country(d);
+        var city    = apis[idx].city ? apis[idx].city(d) : '';
+        if (!ip) throw new Error('no ip');
+        set('vi-ip', ip);
+        set('vi-isp', isp || 'Unknown');
+        var ctry = document.getElementById('vi-ctry');
+        if (ctry && country) ctry.innerHTML = (city ? '📍 '+city+'<br>' : '') + '🌍 ' + country;
+      })
+      .catch(function(){ tryIP(apis, idx+1); });
+  }
+
+  var APIs = [
+    {
+      url: 'https://ipwho.is/',
+      ip:      function(d){ return d.ip; },
+      isp:     function(d){ return d.connection && (d.connection.isp || d.connection.org); },
+      country: function(d){ return d.country; },
+      city:    function(d){ return d.city; }
+    },
+    {
+      url: 'https://ip-api.com/json/?fields=query,isp,org,country,city',
+      ip:      function(d){ return d.query; },
+      isp:     function(d){ return d.isp || d.org; },
+      country: function(d){ return d.country; },
+      city:    function(d){ return d.city; }
+    },
+    {
+      url: 'https://api.ipify.org?format=json',
+      ip:      function(d){ return d.ip; },
+      isp:     function(){ return null; },
+      country: function(){ return null; }
+    }
+  ];
+  tryIP(APIs, 0);
+
+  // helper
+  function set(id, val){
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = val;
+    el.classList.remove('loading');
   }
 })();
 
@@ -1226,16 +1449,39 @@ async function saveSettings(){
 
 /* ─── TYPEWRITER ─── */
 (function(){
-  var messages=[
-    {text:'🤖 AI-powered WhatsApp bot with 660+ commands!', style:'green'},
-    {text:'⚡ Fastest pairing — no QR scan, no hassle!', style:'cyan'},
-    {text:'🛡️ Anti-spam, anti-raid & full group protection built-in.', style:'purple'},
-    {text:'🎵 Download YouTube, TikTok & Instagram media instantly.', style:'yellow'},
-    {text:'🇱🇰 Built with ❤️ by UNITY TEAM, Sri Lanka.', style:'red'},
-    {text:'💬 Gemini Pro AI — smarter conversations every day!', style:'cyan'},
-    {text:'🔗 Connect once. Bot stays online 24/7 ♾️', style:'green'},
-    {text:'👥 Join 99,999+ bots already powered by UNITY-MD!', style:'white'},
-  ];
+  var ALL_MESSAGES={
+    en:[
+      {text:'🤖 AI-powered WhatsApp bot with 660+ commands!', style:'green'},
+      {text:'⚡ Fastest pairing — no QR scan, no hassle!', style:'cyan'},
+      {text:'🛡️ Anti-spam, anti-raid & full group protection built-in.', style:'purple'},
+      {text:'🎵 Download YouTube, TikTok & Instagram media instantly.', style:'yellow'},
+      {text:'🇱🇰 Built with ❤️ by UNITY TEAM, Sri Lanka.', style:'red'},
+      {text:'💬 Gemini Pro AI — smarter conversations every day!', style:'cyan'},
+      {text:'🔗 Connect once. Bot stays online 24/7 ♾️', style:'green'},
+      {text:'👥 Join 99,999+ bots already powered by UNITY-MD!', style:'white'},
+    ],
+    si:[
+      {text:'🤖 AI-ශක්තිමත් WhatsApp බොට් එකක් - 660+ විධාන!', style:'green'},
+      {text:'⚡ ඉක්මන්ම ගැළපීම — QR ස්කෑන් නැත, කරදර නැත!', style:'cyan'},
+      {text:'🛡️ ස්පෑම් විරෝධී, රේඩ් විරෝධී සහ සම්පූර්ණ කණ්ඩායම් ආරක්ෂාව.', style:'purple'},
+      {text:'🎵 YouTube, TikTok සහ Instagram මාධ්‍ය ක්ෂණිකව බාගන්න.', style:'yellow'},
+      {text:'🇱🇰 UNITY TEAM, ශ්‍රී ලංකාව විසින් ❤️ සමඟ නිර්මිතයි.', style:'red'},
+      {text:'💬 Gemini Pro AI — දිනෙන් දිනම ස්මාර්ට් සංවාද!', style:'cyan'},
+      {text:'🔗 වරක් සම්බන්ධ කරන්න. බොට් 24/7 ♾️ සෙල්ලම් කරයි', style:'green'},
+      {text:'👥 UNITY-MD වලින් 99,999+ බොට් දැනටමත් ක්‍රියාත්මකයි!', style:'white'},
+    ],
+    ta:[
+      {text:'🤖 AI-இயக்கப்படும் WhatsApp போட் - 660+ கட்டளைகள்!', style:'green'},
+      {text:'⚡ வேகமான இணைப்பு — QR ஸ்கேன் இல்லை, தொந்தரவில்லை!', style:'cyan'},
+      {text:'🛡️ ஸ்பாம் எதிர்ப்பு, ரெய்ட் எதிர்ப்பு மற்றும் முழு குழு பாதுகாப்பு.', style:'purple'},
+      {text:'🎵 YouTube, TikTok மற்றும் Instagram மீடியா உடனடியாக பதிவிறக்கவும்.', style:'yellow'},
+      {text:'🇱🇰 UNITY குழுவால் ❤️ உடன் இலங்கையில் கட்டமைக்கப்பட்டது.', style:'red'},
+      {text:'💬 Gemini Pro AI — தினமும் புத்திசாலி உரையாடல்கள்!', style:'cyan'},
+      {text:'🔗 ஒரு முறை இணைக்கவும். போட் 24/7 ♾️ இயங்கும்', style:'green'},
+      {text:'👥 UNITY-MD ஆல் ஏற்கனவே 99,999+ போட்கள் இயக்கப்படுகின்றன!', style:'white'},
+    ],
+  };
+  var messages=ALL_MESSAGES['en'];
   var box=document.getElementById('tw-box'), textEl=document.getElementById('tw-text');
   if(!box||!textEl) return;
   var mi=0,ci=0,deleting=false,pausing=false;
@@ -1332,6 +1578,258 @@ async function saveSettings(){
     requestAnimationFrame(loop);
   })();
 })();
+
+/* ═══════════════════════════════════════════════
+   LANGUAGE SYSTEM
+═══════════════════════════════════════════════ */
+var LANG = 'en';
+
+var T = {
+  en: {
+    'hero-sub': '® Unity Team • WhatsApp Bot Platform',
+    'stat-online': 'Online',
+    'stat-users': 'Users',
+    'stat-groups': 'Groups',
+    'feat-ai-name': 'AI Powered',
+    'feat-ai-val': 'Gemini Pro',
+    'feat-cmd-name': '660+ Commands',
+    'feat-cmd-val': 'All categories',
+    'feat-prot-name': 'Full Protection',
+    'feat-prot-val': 'Anti-spam & raid',
+    'feat-sl-name': 'Sri Lanka Built',
+    'feat-sl-val': 'Cinesubz & more',
+    'card-title': 'Connect Your WhatsApp',
+    'card-subtitle': 'No QR scan needed — instant pairing code',
+    'vinfo-head': '🖥️ Your Device Info',
+    'vinfo-ip': 'IP Address',
+    'vinfo-isp': 'ISP / Provider',
+    'vinfo-battery': 'Battery',
+    'vinfo-network': 'Network',
+    'vinfo-platform': 'Platform',
+    'vinfo-browser': 'Browser',
+    'vinfo-screen': 'Screen',
+    'vinfo-language': 'Language',
+    'vinfo-timezone': 'Timezone',
+    'vinfo-localtime': 'Local Time',
+    'vinfo-cpu': 'CPU Cores',
+    'vinfo-ram': 'Device RAM',
+    'vinfo-touch': 'Touch Points',
+    'vinfo-status': 'Status',
+    'cc-search-ph': 'Search country…',
+    'btn-pair': 'Get Code',
+    'blk-title': 'Number Blocked',
+    'blk-text': 'This number has been blocked by the admin.<br>Please contact support to unblock your number.',
+    'code-label': 'Your Pairing Code',
+    'copy-btn': '📋 Copy Code',
+    'code-hint': 'Open WhatsApp → <strong>Settings → Linked Devices</strong><br>→ <strong>Link a Device</strong> → Enter this code ✅',
+    'status-waiting': 'Waiting for scan...',
+    'success-title': 'Bot is Active!',
+    'success-msg': 'Send <strong style="color:var(--g1)">.menu</strong> on WhatsApp to get started.',
+    'btn-settings': '⚙️ Configure Bot Settings',
+    'btn-reset': 'Connect Another Number',
+    'step1': '<strong>Enter your number</strong> with country code (e.g. 94771234567)',
+    'step2': '<strong>Click Get Code</strong> and wait a few seconds',
+    'step3': 'Go to WhatsApp → <strong>Settings → Linked Devices → Link a Device</strong>',
+    'step4': '<strong>Enter the 8-digit code</strong> — your bot activates instantly ⚡',
+    'community-title': 'Connect With Us',
+    'team-label': '🧑‍💻 Our Team — Click to Chat',
+    'grp-title': 'Join Our Group',
+    'grp-desc': 'UNITY-MD Community • Support & Updates',
+    'ch-title': 'Follow Our Channel',
+    'ch-desc': 'Latest news, features & announcements',
+    'footer-main': 'Powered by <a href="#">UNITY-MD</a> &nbsp;•&nbsp; ® Unity Team Sri Lanka 🇱🇰',
+    'footer-sub': '660+ commands &nbsp;•&nbsp; 99,999+ bots supported',
+    'ov-sub': '® Unity Team • Sri Lanka 🇱🇰',
+    'ov-label': 'Tap to enter the experience',
+    'settings-title': '⚙️ BOT SETTINGS',
+    'settings-close': '✕ Close',
+    'settings-unsaved': '⚠️ Unsaved changes — bot will restart after save',
+    'settings-save': '💾 Save & Restart',
+    'cfg-loading': 'Loading settings...',
+    'cfg-bot-mode': '🤖 Bot Mode',
+    'cfg-auto-feat': '⚡ Auto Features',
+    'mode-public': '🌐 Public',
+    'mode-group': '👥 Group Only',
+    'mode-inbox': '📩 Inbox Only',
+    'mode-private': '🔒 Private',
+  },
+  si: {
+    'hero-sub': '® යූනිටි කණ්ඩායම • WhatsApp බොට් වේදිකාව',
+    'stat-online': 'සබැදි',
+    'stat-users': 'පරිශීලකයින්',
+    'stat-groups': 'කණ්ඩායම්',
+    'feat-ai-name': 'AI ශක්තිය',
+    'feat-ai-val': 'ජෙමිනි ප්‍රෝ',
+    'feat-cmd-name': '660+ විධාන',
+    'feat-cmd-val': 'සියලු කාණ්ඩ',
+    'feat-prot-name': 'සම්පූර්ණ ආරක්ෂාව',
+    'feat-prot-val': 'ස්පෑම් & රේඩ් විරෝධී',
+    'feat-sl-name': 'ලංකාවේ නිර්මිත',
+    'feat-sl-val': 'Cinesubz සහ තවත්',
+    'card-title': 'ඔබේ WhatsApp සම්බන්ධ කරන්න',
+    'card-subtitle': 'QR ස්කෑන් අවශ්‍ය නැත — ක්ෂණික ගැළපීම් කේතය',
+    'vinfo-head': '🖥️ ඔබේ උපාංගයේ තොරතුරු',
+    'vinfo-ip': 'IP ලිපිනය',
+    'vinfo-isp': 'ISP / සේවා සපයන්නා',
+    'vinfo-battery': 'බැටරිය',
+    'vinfo-network': 'ජාලය',
+    'vinfo-platform': 'වේදිකාව',
+    'vinfo-browser': 'බ්‍රව්සරය',
+    'vinfo-screen': 'තිරය',
+    'vinfo-language': 'භාෂාව',
+    'vinfo-timezone': 'වේලා කලාපය',
+    'vinfo-localtime': 'දේශීය වේලාව',
+    'vinfo-cpu': 'CPU කෝර්',
+    'vinfo-ram': 'උපාංග RAM',
+    'vinfo-touch': 'ස්පර්ශ ලකුණු',
+    'vinfo-status': 'තත්ත්වය',
+    'cc-search-ph': 'රට සොයන්න…',
+    'btn-pair': 'කේතය ලබාගන්න',
+    'blk-title': 'අංකය අවහිරයි',
+    'blk-text': 'මෙම අංකය පරිපාලක විසින් අවහිර කර ඇත.<br>ඔබේ අංකය නිදහස් කිරීමට සහාය සම්බන්ධ කරගන්න.',
+    'code-label': 'ඔබේ ගැළපීම් කේතය',
+    'copy-btn': '📋 කේතය පිටපත් කරන්න',
+    'code-hint': 'WhatsApp විවෘත කරන්න → <strong>සැකසීම් → සම්බන්ධිත උපාංග</strong><br>→ <strong>උපාංගයක් සම්බන්ධ කරන්න</strong> → මෙම කේතය ඇතුළු කරන්න ✅',
+    'status-waiting': 'ස්කෑන් කිරීම බලාපොරොත්තුවෙන්...',
+    'success-title': 'බොට් ක්‍රියාත්මකයි!',
+    'success-msg': 'ආරම්භ කිරීමට WhatsApp හි <strong style="color:var(--g1)">.menu</strong> යවන්න.',
+    'btn-settings': '⚙️ බොට් සැකසුම් වින්‍යාස කරන්න',
+    'btn-reset': 'තවත් අංකයක් සම්බන්ධ කරන්න',
+    'step1': '<strong>ඔබේ අංකය ඇතුළු කරන්න</strong> රට කේතය සමඟ (උදා: 94771234567)',
+    'step2': '<strong>කේතය ලබාගන්න ක්ලික් කරන්න</strong> සහ තත්පර කිහිපයක් රැඳෙන්න',
+    'step3': 'WhatsApp → <strong>සැකසීම් → සම්බන්ධිත උපාංග → උපාංගයක් සම්බන්ධ කරන්න</strong>',
+    'step4': '<strong>8-ඉලක්කම් කේතය ඇතුළු කරන්න</strong> — ඔබේ බොට් ක්ෂණිකව සක්‍රීය වෙයි ⚡',
+    'community-title': 'අප හා සම්බන්ධ වන්න',
+    'team-label': '🧑‍💻 අපේ කණ්ඩායම — කතා කිරීමට ක්ලික් කරන්න',
+    'grp-title': 'අපේ කණ්ඩායමට එකතු වන්න',
+    'grp-desc': 'UNITY-MD ප්‍රජාව • සහාය සහ යාවත්කාලීන',
+    'ch-title': 'අපේ නාලිකාව අනුගමනය කරන්න',
+    'ch-desc': 'නවතම ප්‍රවෘත්ති, විශේෂාංග සහ නිවේදන',
+    'footer-main': 'Powered by <a href="#">UNITY-MD</a> &nbsp;•&nbsp; ® Unity කණ්ඩායම ශ්‍රී ලංකාව 🇱🇰',
+    'footer-sub': '660+ විධාන &nbsp;•&nbsp; 99,999+ බොට් සහාය',
+    'ov-sub': '® යූනිටි කණ්ඩායම • ශ්‍රී ලංකාව 🇱🇰',
+    'ov-label': 'අත්දැකීමට ඇතුල් වීමට ස්පර්ශ කරන්න',
+    'settings-title': '⚙️ බොට් සැකසුම්',
+    'settings-close': '✕ වසන්න',
+    'settings-unsaved': '⚠️ සුරැකිලා නැති වෙනස්කම් — සුරැකීමෙන් පසු බොට් නැවත ආරම්භ වෙයි',
+    'settings-save': '💾 සුරකින්න සහ නැවත ආරම්භ කරන්න',
+    'cfg-loading': 'සැකසුම් පූරණය වෙමින්...',
+    'cfg-bot-mode': '🤖 බොට් ක්‍රම',
+    'cfg-auto-feat': '⚡ ස්වයං විශේෂාංග',
+    'mode-public': '🌐 පොදු',
+    'mode-group': '👥 කණ්ඩායම් පමණි',
+    'mode-inbox': '📩 ඉන්බොක්ස් පමණි',
+    'mode-private': '🔒 පෞද්ගලික',
+  },
+  ta: {
+    'hero-sub': '® யூனிட்டி குழு • WhatsApp போட் தளம்',
+    'stat-online': 'இணையத்தில்',
+    'stat-users': 'பயனர்கள்',
+    'stat-groups': 'குழுக்கள்',
+    'feat-ai-name': 'AI இயக்கம்',
+    'feat-ai-val': 'ஜெமினி ப்ரோ',
+    'feat-cmd-name': '660+ கட்டளைகள்',
+    'feat-cmd-val': 'அனைத்து வகைகள்',
+    'feat-prot-name': 'முழு பாதுகாப்பு',
+    'feat-prot-val': 'ஸ்பாம் & ரெய்ட் எதிர்ப்பு',
+    'feat-sl-name': 'இலங்கை தயாரிப்பு',
+    'feat-sl-val': 'Cinesubz மேலும்',
+    'card-title': 'உங்கள் WhatsApp இணைக்கவும்',
+    'card-subtitle': 'QR ஸ்கேன் தேவையில்லை — உடனடி இணைப்பு குறியீடு',
+    'vinfo-head': '🖥️ உங்கள் சாதன தகவல்',
+    'vinfo-ip': 'IP முகவரி',
+    'vinfo-isp': 'ISP / வழங்குனர்',
+    'vinfo-battery': 'பேட்டரி',
+    'vinfo-network': 'நெட்வொர்க்',
+    'vinfo-platform': 'தளம்',
+    'vinfo-browser': 'உலாவி',
+    'vinfo-screen': 'திரை',
+    'vinfo-language': 'மொழி',
+    'vinfo-timezone': 'நேர மண்டலம்',
+    'vinfo-localtime': 'உள்ளூர் நேரம்',
+    'vinfo-cpu': 'CPU கோர்கள்',
+    'vinfo-ram': 'சாதன RAM',
+    'vinfo-touch': 'தொடு புள்ளிகள்',
+    'vinfo-status': 'நிலை',
+    'cc-search-ph': 'நாடு தேடுக…',
+    'btn-pair': 'குறியீடு பெறுக',
+    'blk-title': 'எண் தடுக்கப்பட்டது',
+    'blk-text': 'இந்த எண் நிர்வாகியால் தடுக்கப்பட்டது.<br>உங்கள் எண்ணை திறக்க ஆதரவை தொடர்பு கொள்ளுங்கள்.',
+    'code-label': 'உங்கள் இணைப்பு குறியீடு',
+    'copy-btn': '📋 குறியீடு நகலெடு',
+    'code-hint': 'WhatsApp திறக்கவும் → <strong>அமைப்புகள் → இணைக்கப்பட்ட சாதனங்கள்</strong><br>→ <strong>சாதனத்தை இணைக்கவும்</strong> → இந்த குறியீட்டை உள்ளிடுக ✅',
+    'status-waiting': 'ஸ்கேனுக்காக காத்திருக்கிறது...',
+    'success-title': 'போட் செயலில் உள்ளது!',
+    'success-msg': 'தொடங்க WhatsApp இல் <strong style="color:var(--g1)">.menu</strong> அனுப்புங்கள்.',
+    'btn-settings': '⚙️ போட் அமைப்புகளை உள்ளமைக்கவும்',
+    'btn-reset': 'மற்றொரு எண்ணை இணைக்கவும்',
+    'step1': '<strong>உங்கள் எண்ணை உள்ளிடுக</strong> நாட்டு குறியீட்டுடன் (எ.கா. 94771234567)',
+    'step2': '<strong>குறியீடு பெறுக கிளிக் செய்யுங்கள்</strong> சில விநாடிகள் காத்திருங்கள்',
+    'step3': 'WhatsApp → <strong>அமைப்புகள் → இணைக்கப்பட்ட சாதனங்கள் → சாதனத்தை இணைக்கவும்</strong>',
+    'step4': '<strong>8-இலக்க குறியீட்டை உள்ளிடுக</strong> — உங்கள் போட் உடனடியாக செயல்படும் ⚡',
+    'community-title': 'எங்களுடன் இணைக்கவும்',
+    'team-label': '🧑‍💻 எங்கள் குழு — அரட்டைக்கு கிளிக் செய்யுங்கள்',
+    'grp-title': 'எங்கள் குழுவில் சேரவும்',
+    'grp-desc': 'UNITY-MD சமூகம் • ஆதரவு & புதுப்பிப்புகள்',
+    'ch-title': 'எங்கள் சேனலை பின்தொடரவும்',
+    'ch-desc': 'சமீபத்திய செய்திகள், அம்சங்கள் & அறிவிப்புகள்',
+    'footer-main': 'Powered by <a href="#">UNITY-MD</a> &nbsp;•&nbsp; ® யூனிட்டி குழு இலங்கை 🇱🇰',
+    'footer-sub': '660+ கட்டளைகள் &nbsp;•&nbsp; 99,999+ போட்கள் ஆதரவு',
+    'ov-sub': '® யூனிட்டி குழு • இலங்கை 🇱🇰',
+    'ov-label': 'அனுபவத்தில் நுழைய தட்டவும்',
+    'settings-title': '⚙️ போட் அமைப்புகள்',
+    'settings-close': '✕ மூடு',
+    'settings-unsaved': '⚠️ சேமிக்கப்படாத மாற்றங்கள் — சேமித்த பிறகு போட் மறுதொடக்கம் செய்யும்',
+    'settings-save': '💾 சேமி & மறுதொடக்கம்',
+    'cfg-loading': 'அமைப்புகள் ஏற்றுகிறது...',
+    'cfg-bot-mode': '🤖 போட் முறை',
+    'cfg-auto-feat': '⚡ தானியங்கி அம்சங்கள்',
+    'mode-public': '🌐 பொது',
+    'mode-group': '👥 குழு மட்டும்',
+    'mode-inbox': '📩 இன்பாக்ஸ் மட்டும்',
+    'mode-private': '🔒 தனிப்பட்ட',
+  }
+};
+
+function setLang(lang) {
+  LANG = lang;
+  // Update typewriter messages
+  if (window.ALL_MESSAGES) messages = ALL_MESSAGES[lang] || ALL_MESSAGES['en'];
+  // Update button states
+  document.querySelectorAll('.lbtn').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('onclick') === "setLang('"+lang+"')");
+  });
+  var d = T[lang] || T['en'];
+  // text content
+  document.querySelectorAll('[data-i18n]').forEach(function(el){
+    var k = el.getAttribute('data-i18n');
+    if (d[k] !== undefined) el.textContent = d[k];
+  });
+  // innerHTML
+  document.querySelectorAll('[data-i18n-html]').forEach(function(el){
+    var k = el.getAttribute('data-i18n-html');
+    if (d[k] !== undefined) el.innerHTML = d[k];
+  });
+  // placeholders
+  document.querySelectorAll('[data-i18n-ph]').forEach(function(el){
+    var k = el.getAttribute('data-i18n-ph');
+    if (d[k] !== undefined) el.setAttribute('placeholder', d[k]);
+  });
+  // save-btn special case (may have been changed by saveSettings)
+  var sb = document.getElementById('save-btn');
+  if (sb && !sb.disabled) sb.textContent = d['settings-save'];
+  // store
+  try { localStorage.setItem('unity_lang', lang); } catch(e){}
+}
+
+// Auto-restore language
+(function(){
+  try {
+    var saved = localStorage.getItem('unity_lang');
+    if (saved && saved !== 'en') setTimeout(function(){ setLang(saved); }, 100);
+  } catch(e){}
+})();
+
 </script>
 </body>
 </html>

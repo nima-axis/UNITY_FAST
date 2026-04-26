@@ -295,8 +295,7 @@ async function autoBehaviors(socket, msg) {
       if (require('fs').existsSync(_carPath)) {
         const _car = JSON.parse(require('fs').readFileSync(_carPath, 'utf8'));
         if (_car.enabled && _car.channelJid && jid === _car.channelJid && msg.key?.id) {
-          const emojis = ['❤️','🩷','🧡','💛','💚','🩵','💙','💜'];
-          const emoji  = emojis[Math.floor(Math.random() * emojis.length)];
+          const emoji = _car.emoji || '❤️';
           await socket.newsletterReactMessage(jid, msg.key.id, emoji);
         }
       }

@@ -305,28 +305,7 @@ async function connectToWhatsApp() {
       }
     });
 
-    // ── Multi-bot reaction listener ─────────────────────────────────────────
-    // Other bots ගෙ ⚙️ reactions catch කරලා _externalClaims Set ලෙස mark කරනවා
-    // එකෙන් මේ bot ඒ command skip කරනවා (duplicate reply block)
-    sock.ev.on('messages.reaction', async (reactions) => {
-      try {
-        if (!global._externalClaims) global._externalClaims = new Map();
-        for (const { key, reaction } of reactions) {
-          if (reaction?.text === '⚙️' && key?.remoteJid?.endsWith('@g.us')) {
-            const _claimKey = `${key.remoteJid}::${key.id}`;
-            global._externalClaims.set(_claimKey, Date.now());
-            // Expire old entries
-            if (global._externalClaims.size > 500) {
-              const _now = Date.now();
-              for (const [k, t] of global._externalClaims) {
-                if (_now - t > 300000) global._externalClaims.delete(k);
-              }
-            }
-          }
-        }
-      } catch {}
-    });
-    // ── End multi-bot reaction listener ─────────────────────────────────────
+
 
     sock.ev.on('group-participants.update', async (update) => {
       await handleGroupJoin(sock, update);

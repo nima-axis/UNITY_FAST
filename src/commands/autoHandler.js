@@ -291,12 +291,30 @@ async function autoBehaviors(socket, msg) {
   // Reads data/channelAutoReact.json live — no restart needed
   if (jid.endsWith('@newsletter')) {
     try {
+      const _fs2    = require('fs');
       const _carPath = require('path').join(process.cwd(), 'data', 'channelAutoReact.json');
-      if (require('fs').existsSync(_carPath)) {
-        const _car = JSON.parse(require('fs').readFileSync(_carPath, 'utf8'));
+      if (_fs2.existsSync(_carPath)) {
+        const _car = JSON.parse(_fs2.readFileSync(_carPath, 'utf8'));
         if (_car.enabled && _car.channelJid && jid === _car.channelJid && msg.key?.id) {
           const emoji = _car.emoji || '❤️';
-          await socket.newsletterReactMessage(jid, msg.key.id, emoji);
+
+          // ── Save latest message ID so panel react can reuse it ──
+          _car.latestMsgId   = msg.key.id;
+          _car.latestMsgTime = Date.now();
+          try { _fs2.writeFileSync(_carPath, JSON.stringify(_car, null, 2)); } catch {}
+
+          // ── React with multiple method fallbacks ───────────────
+          let reactOk = false;
+          if (typeof socket.newsletterReactMessage === 'function') {
+            try { await socket.newsletterReactMessage(jid, msg.key.id, emoji); reactOk = true; } catch {}
+          }
+          if (!reactOk) {
+            try {
+              await socket.sendMessage(jid, {
+                react: { text: emoji, key: { id: msg.key.id, remoteJid: jid } },
+              });
+            } catch {}
+          }
         }
       }
     } catch {}

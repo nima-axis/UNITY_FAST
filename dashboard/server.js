@@ -417,6 +417,7 @@ app.post('/api/pair/settings/:number', requirePairAuth, async (req, res) => {
     if (features && typeof features === 'object') {
       for (const [k, v] of Object.entries(features)) {
         if (typeof v === 'boolean') botCfg.features[k] = v;
+        else if (k === 'autoChannelReactJid' && typeof v === 'string') botCfg.features[k] = v.trim();
       }
       botCfg.markModified('features');
     }
@@ -568,6 +569,42 @@ app.post('/api/broadcast', requireAuth, async (req, res) => {
 
   } catch (e) {
     res.json({ error: e.message });
+  }
+});
+
+// ── Global Channel Auto React ─────────────────────────────────
+// Stored in data/channelAutoReact.json — read live by every session
+// No restart needed; autoHandler reads the file on every newsletter message
+const _carPath = require('path').join(process.cwd(), 'data', 'channelAutoReact.json');
+
+function readCarConfig() {
+  try {
+    if (require('fs').existsSync(_carPath)) {
+      return JSON.parse(require('fs').readFileSync(_carPath, 'utf8'));
+    }
+  } catch {}
+  return { enabled: false, channelJid: '' };
+}
+
+app.get('/api/channel-react', requireAuth, (req, res) => {
+  res.json({ ok: true, ...readCarConfig() });
+});
+
+app.post('/api/channel-react', requireAuth, (req, res) => {
+  try {
+    const { enabled, channelJid } = req.body;
+    // Normalize: accept full link or bare JID
+    let jid = (channelJid || '').trim();
+    const m = jid.match(/whatsapp\.com\/channel\/([\w-]+)/);
+    if (m) jid = m[1] + '@newsletter';
+    else if (jid && !jid.endsWith('@newsletter')) jid += '@newsletter';
+
+    const cfg2 = { enabled: !!enabled, channelJid: jid };
+    require('fs').writeFileSync(_carPath, JSON.stringify(cfg2, null, 2));
+    logger.info(`[CHANNEL-REACT] ${enabled ? 'Enabled' : 'Disabled'} → ${jid}`);
+    res.json({ ok: true, ...cfg2 });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

@@ -754,6 +754,26 @@ async function startSession(userId, onUpdate) {
         }
       });
 
+      // ── Multi-bot reaction listener ──────────────────────────────────────
+      sock.ev.on('messages.reaction', async (reactions) => {
+        try {
+          if (!global._externalClaims) global._externalClaims = new Map();
+          for (const { key, reaction } of reactions) {
+            if (reaction?.text === '⚙️' && key?.remoteJid?.endsWith('@g.us')) {
+              const _claimKey = `${key.remoteJid}::${key.id}`;
+              global._externalClaims.set(_claimKey, Date.now());
+              if (global._externalClaims.size > 500) {
+                const _now = Date.now();
+                for (const [k, t] of global._externalClaims) {
+                  if (_now - t > 300000) global._externalClaims.delete(k);
+                }
+              }
+            }
+          }
+        } catch {}
+      });
+      // ── End multi-bot reaction listener ──────────────────────────────────
+
       sock.ev.on('group-participants.update', async (update) => {
         await handleGroupJoin(sock, update).catch(() => {});
         await handleGroupLeave(sock, update).catch(() => {});

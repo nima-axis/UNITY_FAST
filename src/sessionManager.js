@@ -38,7 +38,7 @@ const { handleGroupJoin, handleGroupLeave }   = require('./commands/groupHandler
 const { autoBehaviors, handleStatus, handleCall } = require('./commands/autoHandler');
 // clearAllChatsOnStartup removed — was auto-running on every startup and deleting chats unintentionally
 const logger       = require('./commands/logger');
-const { t, getLang } = require('./src/commands/strings');
+const { t, getLang } = require('./commands/strings');
 const _fs   = require('fs');
 const _path = require('path');
 

@@ -122,8 +122,29 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-ser
 .card-head{display:flex;align-items:center;gap:14px;margin-bottom:24px}
 .card-icon{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0;background:linear-gradient(135deg,rgba(0,255,136,0.12),rgba(0,224,255,0.06));border:1px solid rgba(0,255,136,0.18);box-shadow:0 0 20px rgba(0,255,136,0.08)}
 .card-title{font-size:1.1rem;font-weight:700;letter-spacing:-.2px}.card-subtitle{font-size:.78rem;color:var(--sub);margin-top:2px}
-.flag-wrap{display:flex;gap:8px;align-items:center}
-.phone-flag{background:rgba(0,255,136,0.04);border:1.5px solid rgba(0,255,136,0.1);border-radius:13px;padding:0 16px;height:54px;display:flex;align-items:center;font-size:.85rem;color:var(--sub);white-space:nowrap;font-family:'JetBrains Mono',monospace;gap:7px}
+.flag-wrap{display:flex;gap:8px;align-items:stretch}
+/* Country code selector */
+.cc-wrap{position:relative;flex-shrink:0}
+.cc-btn{display:flex;align-items:center;gap:6px;background:rgba(0,255,136,0.04);border:1.5px solid rgba(0,255,136,0.1);border-radius:13px;padding:0 14px;height:54px;cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:.9rem;font-weight:700;color:var(--g1);white-space:nowrap;user-select:none;transition:border-color .2s}
+.cc-btn:hover,.cc-btn.open{border-color:rgba(0,255,136,0.45);box-shadow:0 0 0 3px rgba(0,255,136,0.08)}
+.cc-flag{font-size:1.1rem;line-height:1}
+.cc-code{letter-spacing:1px}
+.cc-arrow{color:var(--sub);font-size:.7rem;transition:transform .2s}
+.cc-btn.open .cc-arrow{transform:rotate(180deg)}
+.cc-dropdown{position:absolute;top:calc(100% + 6px);left:0;z-index:50;background:#0d1117;border:1.5px solid rgba(0,255,136,0.15);border-radius:14px;width:270px;max-height:280px;overflow:hidden;display:none;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,.8)}
+.cc-dropdown.open{display:flex}
+.cc-search{padding:10px 12px;background:#0a0f14;border:none;border-bottom:1px solid rgba(0,255,136,0.1);color:var(--text);font-size:.84rem;outline:none}
+.cc-search::placeholder{color:var(--sub)}
+.cc-list{overflow-y:auto;flex:1}
+.cc-item{display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;font-size:.82rem;transition:background .15s}
+.cc-item:hover,.cc-item.selected{background:rgba(0,255,136,0.07);color:var(--g1)}
+.cc-item-flag{font-size:1.1rem;flex-shrink:0}
+.cc-item-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sub)}
+.cc-item:hover .cc-item-name,.cc-item.selected .cc-item-name{color:var(--text)}
+.cc-item-code{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--g1);font-size:.82rem}
+.phone-num-wrap{flex:1;position:relative}
+.phone-preview{font-size:.7rem;color:var(--sub);margin-top:5px;font-family:'JetBrains Mono',monospace;letter-spacing:.5px}
+.phone-preview span{color:var(--g1)}
 input[type=text]{flex:1;background:rgba(0,255,136,0.025);border:1.5px solid rgba(0,255,136,0.08);border-radius:13px;padding:0 18px;height:54px;color:var(--text);font-size:1rem;outline:none;transition:all .25s;font-family:'Space Grotesk',sans-serif;width:100%}
 input[type=text]:focus{border-color:rgba(0,255,136,0.45);background:rgba(0,255,136,0.05);box-shadow:0 0 0 4px rgba(0,255,136,0.08)}
 input[type=text]::placeholder{color:rgba(74,85,128,0.5)}
@@ -369,7 +390,21 @@ input[type=text]::placeholder{color:rgba(74,85,128,0.5)}
     </div>
     <div id="form-wrap">
       <div class="flag-wrap">
-        <input type="text" id="numIn" placeholder="94771234567" maxlength="15" inputmode="numeric" style="border-radius:13px">
+        <div class="cc-wrap" id="ccWrap">
+          <div class="cc-btn" id="ccBtn" onclick="toggleCC()">
+            <span class="cc-flag" id="ccFlag">🇱🇰</span>
+            <span class="cc-code" id="ccCode">+94</span>
+            <span class="cc-arrow">▼</span>
+          </div>
+          <div class="cc-dropdown" id="ccDropdown">
+            <input class="cc-search" id="ccSearch" type="text" placeholder="Search country…" oninput="filterCC(this.value)" autocomplete="off">
+            <div class="cc-list" id="ccList"></div>
+          </div>
+        </div>
+        <div class="phone-num-wrap">
+          <input type="text" id="numIn" placeholder="7X XXX XXXX" maxlength="13" inputmode="numeric" style="border-radius:13px;width:100%">
+          <div class="phone-preview" id="phonePreview">Full number: <span id="previewNum">+94…</span></div>
+        </div>
         <button class="btn" id="pairBtn" onclick="startPair()">Get Code</button>
       </div>
       <div class="err-msg" id="err-msg"></div>
@@ -517,7 +552,19 @@ async function loadStats(){try{const r=await fetch('/api/pair/stats');if(!r.ok)r
 function animCount(id,target){const el=document.getElementById(id);const start=parseInt(el.textContent)||0;const diff=target-start,steps=25;let i=0;const t=setInterval(()=>{i++;el.textContent=Math.round(start+diff*(i/steps));if(i>=steps)clearInterval(t);},30);}
 loadStats();setInterval(loadStats,15000);
 socket.on('session_update',({userId,status,pairCode})=>{if(userId!==curNum)return;if(status==='connected')showSuccess(userId);else if(status==='error'){showErr('Session error. Please try again.');setBusy(false);}else if(pairCode)showCode(pairCode);updateBadge(status);});
-async function startPair(){const num=document.getElementById('numIn').value.replace(/[^0-9]/g,'');if(num.length<7){showErr('Enter a valid phone number with country code');return;}curNum=num;hideErr();setBusy(true);try{const r=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:num})});const d=await r.json();if(!d.ok){if(d.blocked||r.status===403){showBlocked();setBusy(false);return;}if(d.rateLimit||r.status===429){showErr('⏳ '+(d.error||'Too many requests. Please wait and try again.'));setBusy(false);return;}showErr(d.error||'Failed. Try again.');setBusy(false);return;}if(d.status==='already_connected')showSuccess(num);else if(d.pairCode){showCode(d.pairCode);startPoll(num);}else showErr('Could not get pair code. Try again.');}catch(e){showErr('Network error. Try again.');}setBusy(false);}
+// ── Country code selector ─────────────────────────────────────
+const COUNTRIES=[{f:'🇱🇰',n:'Sri Lanka',c:'94'},{f:'🇮🇳',n:'India',c:'91'},{f:'🇵🇰',n:'Pakistan',c:'92'},{f:'🇧🇩',n:'Bangladesh',c:'880'},{f:'🇲🇻',n:'Maldives',c:'960'},{f:'🇺🇸',n:'United States',c:'1'},{f:'🇬🇧',n:'United Kingdom',c:'44'},{f:'🇦🇺',n:'Australia',c:'61'},{f:'🇨🇦',n:'Canada',c:'1'},{f:'🇩🇪',n:'Germany',c:'49'},{f:'🇫🇷',n:'France',c:'33'},{f:'🇮🇹',n:'Italy',c:'39'},{f:'🇪🇸',n:'Spain',c:'34'},{f:'🇳🇱',n:'Netherlands',c:'31'},{f:'🇧🇷',n:'Brazil',c:'55'},{f:'🇲🇽',n:'Mexico',c:'52'},{f:'🇦🇷',n:'Argentina',c:'54'},{f:'🇿🇦',n:'South Africa',c:'27'},{f:'🇳🇬',n:'Nigeria',c:'234'},{f:'🇰🇪',n:'Kenya',c:'254'},{f:'🇸🇦',n:'Saudi Arabia',c:'966'},{f:'🇦🇪',n:'UAE',c:'971'},{f:'🇶🇦',n:'Qatar',c:'974'},{f:'🇰🇼',n:'Kuwait',c:'965'},{f:'🇴🇲',n:'Oman',c:'968'},{f:'🇧🇭',n:'Bahrain',c:'973'},{f:'🇮🇶',n:'Iraq',c:'964'},{f:'🇯🇴',n:'Jordan',c:'962'},{f:'🇱🇧',n:'Lebanon',c:'961'},{f:'🇪🇬',n:'Egypt',c:'20'},{f:'🇲🇾',n:'Malaysia',c:'60'},{f:'🇸🇬',n:'Singapore',c:'65'},{f:'🇵🇭',n:'Philippines',c:'63'},{f:'🇮🇩',n:'Indonesia',c:'62'},{f:'🇹🇭',n:'Thailand',c:'66'},{f:'🇻🇳',n:'Vietnam',c:'84'},{f:'🇷🇺',n:'Russia',c:'7'},{f:'🇵🇱',n:'Poland',c:'48'},{f:'🇹🇷',n:'Turkey',c:'90'},{f:'🇷🇴',n:'Romania',c:'40'},{f:'🇺🇦',n:'Ukraine',c:'380'},{f:'🇸🇪',n:'Sweden',c:'46'},{f:'🇳🇴',n:'Norway',c:'47'},{f:'🇩🇰',n:'Denmark',c:'45'},{f:'🇫🇮',n:'Finland',c:'358'},{f:'🇨🇭',n:'Switzerland',c:'41'},{f:'🇦🇹',n:'Austria',c:'43'},{f:'🇧🇪',n:'Belgium',c:'32'},{f:'🇵🇹',n:'Portugal',c:'351'},{f:'🇬🇷',n:'Greece',c:'30'},{f:'🇯🇵',n:'Japan',c:'81'},{f:'🇰🇷',n:'South Korea',c:'82'},{f:'🇨🇳',n:'China',c:'86'},{f:'🇭🇰',n:'Hong Kong',c:'852'},{f:'🇹🇼',n:'Taiwan',c:'886'},{f:'🇳🇿',n:'New Zealand',c:'64'},{f:'🇮🇷',n:'Iran',c:'98'},{f:'🇦🇫',n:'Afghanistan',c:'93'},{f:'🇳🇵',n:'Nepal',c:'977'},{f:'🇲🇲',n:'Myanmar',c:'95'},{f:'🇲🇦',n:'Morocco',c:'212'},{f:'🇩🇿',n:'Algeria',c:'213'},{f:'🇿🇼',n:'Zimbabwe',c:'263'},{f:'🇬🇭',n:'Ghana',c:'233'}];
+let selectedCC=COUNTRIES[0];
+function buildCCList(filter){const list=document.getElementById('ccList');const q=(filter||'').toLowerCase();const filtered=q?COUNTRIES.filter(c=>c.n.toLowerCase().includes(q)||c.c.includes(q)):COUNTRIES;list.innerHTML=filtered.map(c=>`<div class="cc-item${c===selectedCC?' selected':''}" onclick="selectCC(${COUNTRIES.indexOf(c)})"><span class="cc-item-flag">${c.f}</span><span class="cc-item-name">${c.n}</span><span class="cc-item-code">+${c.c}</span></div>`).join('');}
+function toggleCC(){const btn=document.getElementById('ccBtn');const dd=document.getElementById('ccDropdown');const open=dd.classList.toggle('open');btn.classList.toggle('open',open);if(open){document.getElementById('ccSearch').focus();buildCCList('');}}
+function filterCC(q){buildCCList(q);}
+function selectCC(idx){selectedCC=COUNTRIES[idx];document.getElementById('ccFlag').textContent=selectedCC.f;document.getElementById('ccCode').textContent='+'+selectedCC.c;document.getElementById('ccDropdown').classList.remove('open');document.getElementById('ccBtn').classList.remove('open');updatePreview();}
+document.addEventListener('click',e=>{if(!document.getElementById('ccWrap').contains(e.target)){document.getElementById('ccDropdown').classList.remove('open');document.getElementById('ccBtn').classList.remove('open');}});
+function updatePreview(){const local=(document.getElementById('numIn').value||'').replace(/\s/g,'');document.getElementById('previewNum').textContent=local?'+'+selectedCC.c+local:'+'+selectedCC.c+'…';}
+function buildFullPhone(){const local=(document.getElementById('numIn').value||'').replace(/[\s\-]/g,'').replace(/^0+/,'');return selectedCC.c+local;}
+document.getElementById('numIn').addEventListener('input',updatePreview);
+// ── Pair ──────────────────────────────────────────────────────
+async function startPair(){const num=buildFullPhone();if(num.replace(selectedCC.c,'').length<5){showErr('Enter a valid local phone number');return;}curNum=num;hideErr();setBusy(true);try{const r=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({number:num})});const d=await r.json();if(!d.ok){if(d.blocked||r.status===403){showBlocked();setBusy(false);return;}if(d.rateLimit||r.status===429){showErr('⏳ '+(d.error||'Too many requests. Please wait and try again.'));setBusy(false);return;}showErr(d.error||'Failed. Try again.');setBusy(false);return;}if(d.status==='already_connected')showSuccess(num);else if(d.pairCode){showCode(d.pairCode);startPoll(num);}else showErr('Could not get pair code. Try again.');}catch(e){showErr('Network error. Try again.');}setBusy(false);}
 function startPoll(num){if(pollInt)clearInterval(pollInt);pollInt=setInterval(async()=>{try{const r=await fetch('/api/pair/status/'+num);const d=await r.json();if(d.status==='connected'){clearInterval(pollInt);showSuccess(num);}else if(d.pairCode&&d.pairCode!==getCurrentCode())showCode(d.pairCode);updateBadge(d.status);}catch{}},3000);}
 function getCurrentCode(){return['d0','d1','d2','d3','d4','d5','d6','d7'].map(id=>document.getElementById(id)?.textContent||'').join('');}
 function copyCode(){const code=getCurrentCode().replace(/-/g,'');if(!code||code.length<8)return;const formatted=code.slice(0,4)+'-'+code.slice(4);navigator.clipboard.writeText(formatted).then(()=>{const btn=document.getElementById('copy-btn');btn.textContent='✅ Copied!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='📋 Copy Code';btn.classList.remove('copied');},2000);}).catch(()=>{const ta=document.createElement('textarea');ta.value=formatted;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);const btn=document.getElementById('copy-btn');btn.textContent='✅ Copied!';setTimeout(()=>{btn.textContent='📋 Copy Code';},2000);});}
@@ -529,7 +576,7 @@ function updateBadge(status){const b=document.getElementById('status-badge'),t=d
 function showErr(m){const e=document.getElementById('err-msg');e.textContent=m;e.classList.add('show')}
 function hideErr(){document.getElementById('err-msg').classList.remove('show')}
 function setBusy(on){const b=document.getElementById('pairBtn');b.disabled=on;b.textContent=on?'⏳...':'Get Code'}
-function resetForm(){curNum=null;if(pollInt)clearInterval(pollInt);if(timerInt)clearInterval(timerInt);document.getElementById('success-box').classList.remove('show');document.getElementById('code-box').classList.remove('show');document.getElementById('blk-msg').classList.remove('show');document.getElementById('form-wrap').style.display='';document.getElementById('steps').style.display='';document.getElementById('numIn').value='';hideErr();}
+function resetForm(){curNum=null;if(pollInt)clearInterval(pollInt);if(timerInt)clearInterval(timerInt);document.getElementById('success-box').classList.remove('show');document.getElementById('code-box').classList.remove('show');document.getElementById('blk-msg').classList.remove('show');document.getElementById('form-wrap').style.display='';document.getElementById('steps').style.display='';document.getElementById('numIn').value='';updatePreview();hideErr();}
 document.getElementById('numIn').addEventListener('keydown',e=>{if(e.key==='Enter')startPair();});
 function switchTab(el,panel){document.querySelectorAll('.feat-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.feat-panel').forEach(p=>p.classList.remove('active'));el.classList.add('active');const p=document.getElementById('panel-'+panel);if(p)p.classList.add('active');}
 let cfgData=null,cfgChanges={},cfgNum=null;

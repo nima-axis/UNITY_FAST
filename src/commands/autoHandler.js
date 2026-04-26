@@ -466,6 +466,15 @@ async function handleCall(socket, calls) {
   }
 }
 
-module.exports = { init, autoBehaviors, handleCall, autoFollowChannels };
+// ── Status viewer ─────────────────────────────────────────────
+async function handleStatus(socket, msg) {
+  try {
+    const f = await getSessionFeatures(socket.sessionOwner);
+    if (!f?.autoRead) return;
+    await socket.readMessages([msg.key]).catch(() => {});
+  } catch {}
+}
+
+module.exports = { init, autoBehaviors, handleCall, handleStatus, autoFollowChannels };
 
 

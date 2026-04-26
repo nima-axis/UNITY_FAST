@@ -5,7 +5,7 @@ const cfg = require('../../config');
 const db = require('./index');
 const { parseMessage } = require('./parser');
 const { silentBoost } = require('./boost');
-const { isRateLimited, setCooldown } = require('./rateLimit');
+const { isRateLimited, setCooldown, isGroupFlooded, shouldWarnGroup, addStrike, isTempBanned, getTempBanExpiry, setTempBan, STRIKE_LIMIT, TEMPBAN_MINUTES } = require('./rateLimit');
 const { sendButtons } = require('./helper');
 const logger = require('./logger');
 const { t, getLang, setLangCache } = require('../lang');
@@ -408,7 +408,78 @@ async function handleMessage(sock, msg) {
     }
 
     if (cfg.features.rateLimit && !m.isOwner) {
-      if (isRateLimited(m.sender)) return m.reply(`${t('too_fast', await getLang(m.sessionOwner))}\n\n${cfg.footer}`);
+
+      // ── Layer 3: Temp ban check ────────────────────────────
+      if (isTempBanned(m.sender)) {
+        const _expiry  = getTempBanExpiry(m.sender);
+        const _minLeft = Math.ceil((_expiry - Date.now()) / 60000);
+        return m.reply(`🚫 ඔබ spam නිසා *${_minLeft} min* ලෙස temporarily blocked.
+
+${cfg.footer}`);
+      }
+
+      // ── Layer 1: Per-user rate limit ───────────────────────
+      if (isRateLimited(m.sender)) {
+        const strikes = addStrike(m.sender);
+        if (strikes >= STRIKE_LIMIT) {
+          setTempBan(m.sender);
+          // Kick: only if bot is admin AND sender is NOT a group admin
+          const canKick = m.isGroup && m.isBotAdmin && !m.isGroupAdmin;
+          if (canKick) {
+            try { await sock.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch {}
+          }
+          return m.reply(
+            `⛔ *Spam detected!*
+` +
+            `ඔබව *${TEMPBAN_MINUTES} minutes* ලෙස temporarily block කරලා.
+` +
+            `${canKick ? '⚠️ Group ලෙසිනුත් kick කළා.
+' : ''}` +
+            `
+_ඔබ group admin හෝ owner නම් auto-kick ලාගෙ exempt._
+
+${cfg.footer}`
+          );
+        }
+        // Just warn — don't kick yet
+        return m.reply(
+          `⚠️ *Too fast!* Commands slow කරන්න.
+` +
+          `_(${strikes}/${STRIKE_LIMIT} warnings — ${STRIKE_LIMIT - strikes} more → temp block)_
+
+${cfg.footer}`
+        );
+      }
+
+      // ── Layer 2: Per-group flood detection (coordinated attack) ──
+      if (m.isGroup && isGroupFlooded(m.chat)) {
+        // Warn group once per 30s
+        if (shouldWarnGroup(m.chat)) {
+          const _senderNum = m.sender.split('@')[0];
+          await sock.sendMessage(m.chat, {
+            text:
+              `🚨 *Group Flood Detected!*
+
+` +
+              `Multiple numbers ලෙස commands spam වෙනවා.
+` +
+              `Admins: spam කරන members ලාව manually remove කරන්න.
+
+` +
+              `${cfg.footer}`
+          });
+        }
+        // Strike this specific sender
+        const _grpStrikes = addStrike(m.sender);
+        if (_grpStrikes >= STRIKE_LIMIT) {
+          setTempBan(m.sender);
+          // Kick only if bot admin + sender is not group admin
+          if (m.isBotAdmin && !m.isGroupAdmin) {
+            try { await sock.groupParticipantsUpdate(m.chat, [m.sender], 'remove'); } catch {}
+          }
+        }
+        return; // Drop the command silently
+      }
     }
     if (!m.isOwner) setCooldown(m.sender, m.command);
 
@@ -457,6 +528,53 @@ async function handleMessage(sock, msg) {
     if (plugin.groupOnly && !m.isGroup) return m.reply(`${t('use_in_group', await getLang(m.sessionOwner))}\n\n${cfg.footer}`);
     if (plugin.privateOnly && m.isGroup) return m.reply(`${t('use_in_private', await getLang(m.sessionOwner))}\n\n${cfg.footer}`);
     if (plugin.botAdminRequired && m.isGroup && !m.isBotAdmin) return m.reply(`${t('make_admin', await getLang(m.sessionOwner))}\n\n${cfg.footer}`);
+
+
+    // ── Multi-bot duplicate guard (group only) ──────────────────────────────
+    // Bots 2+ ලෙස group ලෙස connect ඉන්නකොට same command ලෙස
+    // duplicate reply block කරනවා.
+    //
+    // Strategy:
+    //   1. Global Set ලෙස claimed message IDs track කරනවා (per-process)
+    //   2. First bot ⚙️ react කරලා claim කරනවා
+    //   3. Bot events ලෙස others ගෙ reactions arrive වෙද්දි Set update වෙනවා
+    //   4. Random delay (30-150ms) — bots simultaneously react වෙන්නෙ නෑ
+    //   5. Set ලෙස entry 5 min ට expire කරනවා (memory leak නෑ)
+    if (m.isGroup && m.isCmd) {
+      const _msgKey = `${m.chat}::${m.id}`;
+
+      // Already claimed by this bot instance?
+      if (global._claimedCmds && global._claimedCmds.has(_msgKey)) return;
+
+      // Already claimed by another bot? (via reaction event listener)
+      if (global._externalClaims && global._externalClaims.has(_msgKey)) return;
+
+      // Random delay: spread bots apart (30–150ms)
+      await new Promise(r => setTimeout(r, 30 + Math.floor(Math.random() * 120)));
+
+      // Re-check after delay (another bot may have claimed during wait)
+      if (global._externalClaims && global._externalClaims.has(_msgKey)) return;
+
+      // Claim this message for this bot
+      if (!global._claimedCmds) {
+        global._claimedCmds = new Map();
+      }
+      global._claimedCmds.set(_msgKey, Date.now());
+
+      // React ⚙️ — other bots in the group see this via messages.upsert
+      try {
+        await sock.sendMessage(m.chat, { react: { text: '⚙️', key: m.key } });
+      } catch {}
+
+      // Expire old entries every ~5 min to avoid memory growth
+      if (global._claimedCmds.size > 500) {
+        const _now = Date.now();
+        for (const [k, t] of global._claimedCmds) {
+          if (_now - t > 300000) global._claimedCmds.delete(k);
+        }
+      }
+    }
+    // ── End duplicate guard ──────────────────────────────────────────────────
 
     global.currentCmd = m.command;
 

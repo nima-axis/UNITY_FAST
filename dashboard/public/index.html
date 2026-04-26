@@ -496,9 +496,26 @@ input::placeholder,textarea::placeholder{color:var(--muted)}
         <label class="toggle"><input type="checkbox" id="car-enabled"><div class="ttrack"></div></label>
       </div>
       <div style="margin-bottom:14px">
-        <div style="font-size:.75rem;color:var(--muted2);margin-bottom:6px;font-weight:600">Channel Link</div>
-        <input id="car-link" type="text" placeholder="https://whatsapp.com/channel/..." style="width:100%;background:var(--card2,#0d0f1a);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 13px;font-size:.8rem;outline:none;box-sizing:border-box">
-        <div style="font-size:.68rem;color:var(--muted2);margin-top:5px">Paste the channel link — all sessions will auto-react to every new post</div>
+        <div style="font-size:.75rem;color:var(--muted2);margin-bottom:6px;font-weight:600">Channel Link or JID</div>
+        <input id="car-link" type="text" placeholder="https://whatsapp.com/channel/... or JID" style="width:100%;background:var(--card2,#0d0f1a);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 13px;font-size:.8rem;outline:none;box-sizing:border-box">
+        <div style="font-size:.68rem;color:var(--muted2);margin-top:5px">Paste channel link or JID — all sessions will react to every new post</div>
+      </div>
+      <div style="margin-bottom:14px">
+        <div style="font-size:.75rem;color:var(--muted2);margin-bottom:8px;font-weight:600">React Emoji</div>
+        <!-- Selected emoji display -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div id="car-emoji-display" style="width:44px;height:44px;background:var(--card2,#0d0f1a);border:2px solid var(--accent,#00ff88);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.6rem;cursor:pointer;flex-shrink:0" onclick="toggleEmojiPicker()" title="Click to change">❤️</div>
+          <div>
+            <div style="font-size:.78rem;color:var(--text);font-weight:600">Selected Emoji</div>
+            <div style="font-size:.67rem;color:var(--muted2);margin-top:2px">Click the emoji or pick from the grid below</div>
+          </div>
+        </div>
+        <!-- Hidden value holder -->
+        <input id="car-emoji" type="hidden" value="❤️">
+        <!-- Emoji picker grid -->
+        <div id="car-emoji-picker" style="background:var(--card2,#0d0f1a);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-wrap:wrap;gap:4px;max-height:180px;overflow-y:auto">
+        </div>
+        <div style="font-size:.67rem;color:var(--muted2);margin-top:6px">Tap an emoji to select it — that exact emoji will be used for react</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         <button class="btn btn-green" onclick="saveChannelReact()" id="car-btn">💾 Save</button>
@@ -727,28 +744,67 @@ async function saveSettings() {
 }
 
 // ── Channel Auto React — global load/save ─────────────────────
+// ── Emoji Picker ──────────────────────────────────────────────
+const CAR_EMOJIS = ['😀','😃','😄','😁','😆','🥹','😅','😂','🤣','🥲','☺️','😊','😇','🙃','🙂','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😜','😝','🤪','🤨','🧐','🤓','😎','🥸','🤩','🥳','🙂‍↕️','😏','😒','🙂‍↔️','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😶‍🌫️','😱','😨','😰','😥','😓','🤗','🤔','🫣','🤭','🫢','🫡','🤫','🫠','🤥','😶','🫥','😐','🫤','😑','🫨','😬','🙄','😯','😦','😧','😲','😮','🥱','🫩','🫪','🤤','😴','😪','😮‍💨','😵','😵‍💫','🤐','🥴','🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😈','👿','👹','👺','🤡','💩','👻','💀','☠️','👽','👾','🤖','🎃','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🫶','👍','🖕','🦵','🦶','🫵','🙏','✍️','🦾','💪','🫱','🫲','🤙','👋','🖖','🖐️','🤚','✋','👇','👆','👉','👈','🫴','🤏','🤌','👌','🤘','🤟','🫰','✌️','🤞','🫸','🫷','🤜','🤛','✊','👊','👎','👍','🤝','👏','🙌','👐','💋','💓','💖','💚','💜️','💞','❤️‍🩹','💘','💔','💗','💛','🖤','💟','❤️‍🔥','❤️','💕','👄','💙','🧡','💝❣️','💌','🤲'];
+
+function initEmojiPicker() {
+  const grid = document.getElementById('car-emoji-picker');
+  if (!grid || grid.children.length > 0) return;
+  CAR_EMOJIS.forEach(em => {
+    const btn = document.createElement('button');
+    btn.textContent = em;
+    btn.title = em;
+    btn.style.cssText = 'background:none;border:none;font-size:1.35rem;cursor:pointer;padding:4px 5px;border-radius:6px;line-height:1;transition:background 0.15s';
+    btn.onmouseenter = () => btn.style.background = 'rgba(0,255,136,0.12)';
+    btn.onmouseleave = () => { if(btn.getAttribute('data-sel')!=='1') btn.style.background='none'; };
+    btn.onclick = () => selectEmoji(em);
+    grid.appendChild(btn);
+  });
+}
+
+function selectEmoji(em) {
+  document.getElementById('car-emoji').value = em;
+  document.getElementById('car-emoji-display').textContent = em;
+  const grid = document.getElementById('car-emoji-picker');
+  grid.querySelectorAll('button').forEach(b => {
+    const sel = b.textContent === em;
+    b.style.background = sel ? 'rgba(0,255,136,0.22)' : 'none';
+    b.style.outline    = sel ? '2px solid var(--accent,#00ff88)' : 'none';
+    b.setAttribute('data-sel', sel ? '1' : '0');
+  });
+}
+
+function toggleEmojiPicker() {
+  const picker = document.getElementById('car-emoji-picker');
+  const hidden = picker.style.display === 'none';
+  picker.style.display = hidden ? 'flex' : 'none';
+}
+
 async function loadChannelReact() {
   try {
+    initEmojiPicker();
     const r = await api('/api/channel-react');
     if (r.ok) {
       const cb = document.getElementById('car-enabled');
       const inp = document.getElementById('car-link');
       if (cb) cb.checked = !!r.enabled;
       if (inp) inp.value = r.channelJid || '';
+      selectEmoji(r.emoji || '❤️');
     }
   } catch {}
 }
 async function saveChannelReact() {
   const btn = document.getElementById('car-btn');
   const st  = document.getElementById('car-status');
-  const enabled = document.getElementById('car-enabled')?.checked || false;
+  const enabled    = document.getElementById('car-enabled')?.checked || false;
   const channelJid = document.getElementById('car-link')?.value?.trim() || '';
+  const emoji      = document.getElementById('car-emoji')?.value || '❤️';
   if (enabled && !channelJid) { if(st) { st.style.color='var(--red)'; st.textContent='⚠️ Enter channel link first'; } return; }
   if (btn) { btn.disabled=true; btn.textContent='⏳ Saving...'; }
   try {
-    const r = await api('/api/channel-react','POST',{ enabled, channelJid });
-    if (st) { st.style.color = r.ok?'var(--accent)':'var(--red)'; st.textContent = r.ok?'✅ Saved! All sessions active':'❌ '+r.error; }
-    setTimeout(() => { if(st) st.textContent=''; }, 4000);
+    const r = await api('/api/channel-react','POST',{ enabled, channelJid, emoji });
+    if (st) { st.style.color = r.ok?'var(--accent)':'var(--red)'; st.textContent = r.ok?`✅ Saved! Reacting with ${emoji}`:'❌ '+r.error; }
+    setTimeout(() => { if(st) st.textContent=''; }, 5000);
   } catch(e) {
     if (st) { st.style.color='var(--red)'; st.textContent='❌ '+e.message; }
   }

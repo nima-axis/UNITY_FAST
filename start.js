@@ -261,10 +261,12 @@ async function connectToWhatsApp() {
               },
             }).catch(() => {});
 
-            // 2) Audio
+            // 2) Audio — local file first, fallback to URL
+            const _audioPath = require('path').join(__dirname, 'src/media/startup_voice.ogg');
+            const _audioExists = require('fs-extra').existsSync(_audioPath);
             await sock.sendMessage(selfJid, {
-              audio: { url: AUDIO_URL },
-              mimetype: 'audio/mp4',
+              audio: _audioExists ? { url: 'file://' + _audioPath } : { url: AUDIO_URL },
+              mimetype: _audioExists ? 'audio/ogg; codecs=opus' : 'audio/mp4',
               ptt: true,
             }).catch(() => {});
 

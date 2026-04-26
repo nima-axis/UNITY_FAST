@@ -592,21 +592,24 @@ app.get('/api/channel-react', requireAuth, (req, res) => {
 
 app.post('/api/channel-react', requireAuth, async (req, res) => {
   try {
-    const { enabled, channelJid, emoji, postLink } = req.body;
+    const { enabled, channelJid, emoji } = req.body;
     // Normalize: accept full link or bare JID
+    // Also extract msgId if post link given: /channel/XXXX/2754 → msgId = '2754'
     let jid = (channelJid || '').trim();
-    const m = jid.match(/whatsapp\.com\/channel\/([\w-]+)/);
-    if (m) jid = m[1] + '@newsletter';
-    else if (jid && !jid.endsWith('@newsletter')) jid += '@newsletter';
-
-    // Extract message ID from post link if provided
-    // Format: https://whatsapp.com/channel/CHANNEL_ID/MESSAGE_ID
-    const postLinkStr = (postLink || '').trim();
-    const postMsgMatch = postLinkStr.match(/whatsapp\.com\/channel\/[\w-]+\/([\w-]+)/);
-    const postMsgId = postMsgMatch ? postMsgMatch[1] : null;
+    let extractedMsgId = null;
+    const mPost = jid.match(/whatsapp\.com\/channel\/([\w-]+)\/(\d+)/);
+    if (mPost) {
+      jid = mPost[1] + '@newsletter';
+      extractedMsgId = mPost[2];
+    } else {
+      const m = jid.match(/whatsapp\.com\/channel\/([\w-]+)/);
+      if (m) jid = m[1] + '@newsletter';
+      else if (jid && !jid.endsWith('@newsletter')) jid += '@newsletter';
+    }
 
     const savedEmoji = (emoji || '❤️').trim() || '❤️';
     const cfg2 = { enabled: !!enabled, channelJid: jid, emoji: savedEmoji };
+    if (extractedMsgId) cfg2.latestMsgId = extractedMsgId;
     require('fs').writeFileSync(_carPath, JSON.stringify(cfg2, null, 2));
     logger.info(`[CHANNEL-REACT] ${enabled ? 'Enabled' : 'Disabled'} → ${jid} emoji=${savedEmoji}`);
 
@@ -621,61 +624,130 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
     const connected   = allSessions.filter(s => s.status === 'connected');
 
     // ── Helper: try multiple fetch method names ───────────────
-    async function fetchLatestMsgId(sock, channelJid) {
-      // Priority 0: post link message ID from panel (100% reliable)
-      if (postMsgId) return postMsgId;
-
-      // Priority 1: stored ID from autoHandler (reliable)
-      try {
-        const stored = readCarConfig();
-        if (stored.latestMsgId) return stored.latestMsgId;
-      } catch {}
-
-      // Priority 2: try known Baileys fetch method names
-      const fetchMethods = [
-        'fetchNewsletterMessages',
-        'newsletterFetchMessages',
-        'getNewsletterMessages',
-      ];
-      for (const method of fetchMethods) {
-        if (typeof sock[method] !== 'function') continue;
-        try {
-          const msgs = await sock[method](channelJid, 5);
-          if (msgs?.length && msgs[0]?.key?.id) {
-            // Cache it so subsequent sessions can reuse
-            try {
-              const c = readCarConfig();
-              c.latestMsgId = msgs[0].key.id;
-              require('fs').writeFileSync(_carPath, JSON.stringify(c, null, 2));
-            } catch {}
-            return msgs[0].key.id;
-          }
-        } catch {}
-      }
+    // ── Normalize JID: accept link, bare JID, or @newsletter JID ────
+    function normalizeJid(input) {
+      if (!input) return null;
+      const s = input.trim();
+      if (s.includes('@newsletter')) return s;
+      const m = s.match(/whatsapp\.com\/channel\/([a-zA-Z0-9_-]+)/i);
+      if (m) return m[1] + '@newsletter';
+      if (s.length > 5) return s + '@newsletter';
       return null;
     }
 
-    // ── Helper: try multiple react methods ────────────────────
-    async function tryReact(sock, channelJid, msgId, emoji) {
-      // Method 1: newsletterReactMessage(jid, msgId, emoji)
-      if (typeof sock.newsletterReactMessage === 'function') {
-        try { await sock.newsletterReactMessage(channelJid, msgId, emoji); return true; } catch {}
+    // ── Fetch latest messages with every possible Baileys method ──
+    async function fetchMsgs(sock, jid, count = 10) {
+      const methods = [
+        // Method A: direct call
+        () => sock.fetchNewsletterMessages(jid, count),
+        // Method B: alternate name
+        () => sock.newsletterFetchMessages(jid, count),
+        // Method C: with options object
+        () => sock.fetchNewsletterMessages(jid, { count }),
+        // Method D: getNewsletterMessages
+        () => sock.getNewsletterMessages(jid, count),
+        // Method E: newsletterMessages
+        () => sock.newsletterMessages(jid, count),
+        // Method F: query style
+        () => sock.fetchMessages(jid, count),
+      ];
+      for (const fn of methods) {
+        try {
+          const res = await fn();
+          const list = Array.isArray(res) ? res : res?.messages || [];
+          if (list.length) return list;
+        } catch {}
       }
-      // Method 2: sendMessage react with full key
-      try {
-        await sock.sendMessage(channelJid, {
-          react: { text: emoji, key: { id: msgId, remoteJid: channelJid } },
-        });
-        return true;
-      } catch {}
-      // Method 3: sendMessage react with minimal key
-      try {
-        await sock.sendMessage(channelJid, {
-          react: { text: emoji, key: { id: msgId } },
-        });
-        return true;
-      } catch {}
-      return false;
+      return [];
+    }
+
+    // ── Try react with every possible method ──────────────────
+    async function tryAllReactMethods(sock, jid, msgKey, msgId, emoji) {
+      const fullKey = msgKey || { id: msgId, remoteJid: jid };
+
+      const methods = [
+        // 1. newsletterReactMessage (most direct)
+        () => sock.newsletterReactMessage(jid, msgId || fullKey.id, emoji),
+        // 2. sendMessage with full key (boost.js proven)
+        () => sock.sendMessage(jid, { react: { text: emoji, key: fullKey } }),
+        // 3. sendMessage with remoteJid in key
+        () => sock.sendMessage(jid, { react: { text: emoji, key: { id: fullKey.id, remoteJid: jid } } }),
+        // 4. sendMessage with minimal key
+        () => sock.sendMessage(jid, { react: { text: emoji, key: { id: fullKey.id } } }),
+        // 5. relayMessage style
+        () => sock.relayMessage(jid, { reactionMessage: { key: fullKey, text: emoji } }, {}),
+        // 6. newsletterReactMessage with full key id
+        () => sock.newsletterReactMessage(jid, fullKey.id, emoji),
+        // 7. sendMessage react with participant
+        () => sock.sendMessage(jid, { react: { text: emoji, key: { ...fullKey, participant: jid } } }),
+        // 8. sendMessage with fromMe false
+        () => sock.sendMessage(jid, { react: { text: emoji, key: { ...fullKey, fromMe: false } } }),
+        // 9. newsletterReactMessage with emoji as object
+        () => sock.newsletterReactMessage(jid, fullKey.id, { text: emoji }),
+        // 10. sendMessage react to channel with server ack
+        () => sock.sendMessage(jid, { react: { text: emoji, key: fullKey } }, { statusJidList: [] }),
+        // 11. Direct WA binary node (low level)
+        () => sock.query({ tag: 'iq', attrs: { type: 'set', to: jid }, content: [{ tag: 'react', attrs: { id: fullKey.id, emoji } }] }),
+        // 12. sendMessage with contextInfo
+        () => sock.sendMessage(jid, { react: { text: emoji, key: fullKey, contextInfo: { remoteJid: jid } } }),
+        // 13. newsletterReactMessage with count
+        () => sock.newsletterReactMessage(jid, fullKey.id, emoji, 1),
+        // 14. sendAndWaitForMessage
+        () => sock.sendAndWaitForMessage && sock.sendAndWaitForMessage(jid, { react: { text: emoji, key: fullKey } }),
+        // 15. sendMessage with newsletter type hint
+        () => sock.sendMessage(jid, { react: { text: emoji, key: { ...fullKey, participant: '0@s.whatsapp.net' } } }),
+        // 16. generateWAMessage then relay
+        async () => {
+          const { generateWAMessage } = require('@whiskeysockets/baileys');
+          const msg = await generateWAMessage(jid, { react: { text: emoji, key: fullKey } }, { userJid: sock.user?.id });
+          await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+        },
+        // 17. newsletterReactMessage with string conversion
+        () => sock.newsletterReactMessage(String(jid), String(fullKey.id), String(emoji)),
+        // 18. sendMessage twice (some servers need retry)
+        async () => {
+          await sock.sendMessage(jid, { react: { text: emoji, key: fullKey } });
+          await new Promise(r => setTimeout(r, 500));
+          await sock.sendMessage(jid, { react: { text: emoji, key: fullKey } });
+        },
+        // 19. newsletterReactMessage after 1s delay
+        async () => {
+          await new Promise(r => setTimeout(r, 1000));
+          await sock.newsletterReactMessage(jid, fullKey.id, emoji);
+        },
+        // 20. sendMessage with newsletter mediaType hint
+        () => sock.sendMessage(jid, { react: { text: emoji, key: fullKey } }, { mediaType: 'newsletter' }),
+      ];
+
+      for (let i = 0; i < methods.length; i++) {
+        try {
+          if (typeof methods[i] !== 'function') continue;
+          await methods[i]();
+          return { ok: true, method: i + 1 };
+        } catch {}
+      }
+      return { ok: false };
+    }
+
+    // ── Main: fetch posts + react with all fallbacks ───────────
+    async function fetchAndReact(sock, channelJid, emoji) {
+      const jid = normalizeJid(channelJid);
+      if (!jid) return { ok: false, reason: 'invalid jid' };
+
+      // Step 1: follow channel
+      try { await sock.followNewsletter(jid); } catch {}
+
+      // Step 2: fetch latest posts
+      const msgs = await fetchMsgs(sock, jid);
+      if (!msgs.length) return { ok: false, reason: 'no posts fetched' };
+
+      const latest = msgs[0];
+      const msgKey = latest.key;
+      const msgId  = msgKey?.id;
+
+      // Step 3: try all react methods
+      const result = await tryAllReactMethods(sock, jid, msgKey, msgId, emoji);
+      return result;
     }
 
     let successCount = 0, failCount = 0;
@@ -700,22 +772,22 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
         continue;
       }
 
-      try {
-        // Step 1: follow channel
-        try { await s.followNewsletter(jid); } catch {}
-
-        // Step 2: get latest message ID
-        const msgId = await fetchLatestMsgId(s, jid);
-
-        if (!msgId) {
-          failReason = 'no message ID (channel has no posts or fetch failed)';
-        } else {
-          // Step 3: react
-          sessionOk = await tryReact(s, jid, msgId, savedEmoji);
-          if (!sessionOk) failReason = 'react method failed';
+      // Retry up to 3 times if failed
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const result = await fetchAndReact(s, jid, savedEmoji);
+          if (result.ok) {
+            sessionOk = true;
+            failReason = `method ${result.method} (attempt ${attempt})`;
+            break;
+          }
+          failReason = result.reason || 'all 20 methods failed';
+        } catch (e2) {
+          failReason = (e2.message || 'unknown error').slice(0, 60);
         }
-      } catch (e2) {
-        failReason = (e2.message || 'unknown error').slice(0, 60);
+        if (!sessionOk && attempt < 3) {
+          await new Promise(r => setTimeout(r, 2000 * attempt)); // 2s, 4s
+        }
       }
 
       if (sessionOk) successCount++; else failCount++;

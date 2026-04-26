@@ -8,47 +8,50 @@ const STRIKE_LIMIT    = 3;
 const TEMPBAN_MINUTES = 30;
 const MUTE_FILE       = path.join(__dirname, '../../data/muted.json');
 
-// ── Persistent mute store (shared across all sessions) ────────
-function loadMutes() {
-  try {
-    if (!fs.existsSync(MUTE_FILE)) fs.writeFileSync(MUTE_FILE, '{}');
-    return JSON.parse(fs.readFileSync(MUTE_FILE, 'utf-8'));
-  } catch { return {}; }
-}
+// ── In-memory mute cache (loaded once at startup) ─────────────
+let muteCache = {};
+let muteDirty = false;
 
-function saveMutes(data) {
-  try { fs.writeFileSync(MUTE_FILE, JSON.stringify(data, null, 2)); } catch {}
-}
+// Load once at startup
+try {
+  if (!fs.existsSync(MUTE_FILE)) fs.writeFileSync(MUTE_FILE, '{}');
+  muteCache = JSON.parse(fs.readFileSync(MUTE_FILE, 'utf-8'));
+} catch { muteCache = {}; }
 
+// Write to disk every 10s only if changed (non-blocking)
+setInterval(() => {
+  if (!muteDirty) return;
+  muteDirty = false;
+  fs.writeFile(MUTE_FILE, JSON.stringify(muteCache, null, 2), () => {});
+}, 10 * 1000);
+
+// ── Mute functions (memory only — fast) ───────────────────────
 function isTempBanned(jid) {
-  const mutes  = loadMutes();
-  const expiry = mutes[jid];
+  const expiry = muteCache[jid];
   if (!expiry) return false;
   if (Date.now() > expiry) {
-    delete mutes[jid];
-    saveMutes(mutes);
+    delete muteCache[jid];
+    muteDirty = true;
     return false;
   }
   return true;
 }
 
 function setTempBan(jid) {
-  const mutes = loadMutes();
-  mutes[jid]  = Date.now() + TEMPBAN_MINUTES * 60 * 1000;
-  saveMutes(mutes);
+  muteCache[jid] = Date.now() + TEMPBAN_MINUTES * 60 * 1000;
+  muteDirty = true;
   strikeMap.delete(jid);
 }
 
 function getTempBanExpiry(jid) {
-  const mutes = loadMutes();
-  return mutes[jid] || 0;
+  return muteCache[jid] || 0;
 }
 
-// ── In-memory maps (per-session, resets on restart — OK) ──────
-const rateLimitMap  = new Map(); // jid -> [timestamps]
-const cooldownMap   = new Map(); // jid:cmd -> timestamp
-const strikeMap     = new Map(); // jid -> strike count
-const groupFloodMap = new Map(); // groupJid -> [timestamps]
+// ── In-memory maps ────────────────────────────────────────────
+const rateLimitMap  = new Map();
+const cooldownMap   = new Map();
+const strikeMap     = new Map();
+const groupFloodMap = new Map();
 
 // ── Rate limit check ──────────────────────────────────────────
 function isRateLimited(jid) {
@@ -64,7 +67,6 @@ function isRateLimited(jid) {
   return times.length > limit;
 }
 
-// ── Strikes ───────────────────────────────────────────────────
 function addStrike(jid) {
   const count = (strikeMap.get(jid) || 0) + 1;
   strikeMap.set(jid, count);
@@ -124,15 +126,10 @@ setInterval(() => {
     if (!fresh.length) groupFloodMap.delete(k);
     else groupFloodMap.set(k, fresh);
   }
-
-  // Also clean expired mutes from file
-  const mutes = loadMutes();
-  let changed = false;
-  for (const [jid, expiry] of Object.entries(mutes)) {
-    if (now > expiry) { delete mutes[jid]; changed = true; }
+  // Clean expired mutes from cache
+  for (const [jid, expiry] of Object.entries(muteCache)) {
+    if (now > expiry) { delete muteCache[jid]; muteDirty = true; }
   }
-  if (changed) saveMutes(mutes);
-
 }, 5 * 60 * 1000);
 
 module.exports = {

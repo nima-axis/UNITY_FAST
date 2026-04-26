@@ -8,7 +8,7 @@ const {
   makeCacheableSignalKeyStore,
   proto,
   generateWAMessageFromContent,
-, Browsers } = require('@whiskeysockets/baileys');
+  Browsers } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const chalk = require('chalk');

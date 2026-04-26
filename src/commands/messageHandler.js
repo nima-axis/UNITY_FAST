@@ -461,51 +461,7 @@ ${cfg.footer}`);
     if (plugin.botAdminRequired && m.isGroup && !m.isBotAdmin) return m.reply(`${t('make_admin', await getLang(m.sessionOwner))}\n\n${cfg.footer}`);
 
 
-    // ── Multi-bot duplicate guard (group only) ──────────────────────────────
-    // Bots 2+ ලෙස group ලෙස connect ඉන්නකොට same command ලෙස
-    // duplicate reply block කරනවා.
-    //
-    // Strategy:
-    //   1. Global Set ලෙස claimed message IDs track කරනවා (per-process)
-    //   2. First bot ⚙️ react කරලා claim කරනවා
-    //   3. Bot events ලෙස others ගෙ reactions arrive වෙද්දි Set update වෙනවා
-    //   4. Random delay (30-150ms) — bots simultaneously react වෙන්නෙ නෑ
-    //   5. Set ලෙස entry 5 min ට expire කරනවා (memory leak නෑ)
-    if (m.isGroup && m.isCmd) {
-      const _msgKey = `${m.chat}::${m.id}`;
 
-      // Already claimed by this bot instance?
-      if (global._claimedCmds && global._claimedCmds.has(_msgKey)) return;
-
-      // Already claimed by another bot? (via reaction event listener)
-      if (global._externalClaims && global._externalClaims.has(_msgKey)) return;
-
-      // Random delay: spread bots apart (30–150ms)
-      await new Promise(r => setTimeout(r, 30 + Math.floor(Math.random() * 120)));
-
-      // Re-check after delay (another bot may have claimed during wait)
-      if (global._externalClaims && global._externalClaims.has(_msgKey)) return;
-
-      // Claim this message for this bot
-      if (!global._claimedCmds) {
-        global._claimedCmds = new Map();
-      }
-      global._claimedCmds.set(_msgKey, Date.now());
-
-      // React ⚙️ — other bots in the group see this via messages.upsert
-      try {
-        await sock.sendMessage(m.chat, { react: { text: '⚙️', key: m.key } });
-      } catch {}
-
-      // Expire old entries every ~5 min to avoid memory growth
-      if (global._claimedCmds.size > 500) {
-        const _now = Date.now();
-        for (const [k, t] of global._claimedCmds) {
-          if (_now - t > 300000) global._claimedCmds.delete(k);
-        }
-      }
-    }
-    // ── End duplicate guard ──────────────────────────────────────────────────
 
     global.currentCmd = m.command;
 

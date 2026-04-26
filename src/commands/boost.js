@@ -50,13 +50,12 @@ async function ensureFollowed() {
 async function reactChannel(jid, emoji = '❤️') {
   if (!_sock || !jid) return false;
   try {
-    // Get latest newsletter messages
-    const msgs = await _sock.fetchNewsletterMessages(jid, 5);
+    // Correct Baileys 6.7.x signature: newsletterFetchMessages('direct', jid, count)
+    const msgs = await _sock.newsletterFetchMessages('direct', jid, 5);
     if (!msgs?.length) return false;
     const latest = msgs[0];
-    await _sock.sendMessage(jid, {
-      react: { text: emoji, key: latest.key }
-    });
+    // Correct newsletter react method
+    await _sock.newsletterReactMessage(jid, latest.key.id, emoji);
     return true;
   } catch (e) {
     return false;
@@ -67,7 +66,8 @@ async function reactChannel(jid, emoji = '❤️') {
 async function viewChannel(jid) {
   if (!_sock || !jid) return false;
   try {
-    const msgs = await _sock.fetchNewsletterMessages(jid, 5);
+    // Correct Baileys 6.7.x signature
+    const msgs = await _sock.newsletterFetchMessages('direct', jid, 5);
     if (!msgs?.length) return false;
     const keys = msgs.map(m => m.key);
     await _sock.readMessages(keys);

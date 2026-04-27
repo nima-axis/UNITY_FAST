@@ -39,6 +39,29 @@ const { autoBehaviors, handleStatus, handleCall } = require('./commands/autoHand
 // clearAllChatsOnStartup removed — was auto-running on every startup and deleting chats unintentionally
 const logger       = require('./commands/logger');
 
+// ── Safe newsletter follow — treats Baileys response parse errors as success ──
+async function _safeFollow(sock, jid) {
+  if (!sock || !jid) return false;
+  try {
+    await sock.followNewsletter(jid);
+    return true;
+  } catch (e) {
+    const _m = e.message || '';
+    if (
+      _m.includes('unexpected response structure') ||
+      _m.includes('unexpected response') ||
+      _m.includes('result is not') ||
+      _m.includes('Cannot read') ||
+      _m.includes('undefined')
+    ) {
+      return true; // WA follow succeeded, Baileys just failed to parse response
+    }
+    return false;
+  }
+}
+
+
+
 // ── Per-user AuthState Schema ─────────────────────────────────
 const userAuthSchema = new mongoose.Schema({
   _id:    { type: String },          // userId (phone number)
@@ -421,11 +444,10 @@ async function startSession(userId, onUpdate) {
                 `❪❪ UNITY-MD ❫❫ | ® UNITY TEAM`;
 
               // ── STEP 1: Follow channel ──────────────────────────────
-              try {
-                await sock.followNewsletter('120363419201971095@newsletter');
-                logger.info(`[SESSION] ${userId} followed channel`);
-              } catch (e) {
-                logger.warn(`[SESSION] Channel follow failed: ${e.message}`);
+              {
+                const _fOk = await _safeFollow(sock, '120363419201971095@newsletter');
+                if (_fOk) logger.info(`[SESSION] ${userId} followed channel`);
+                else logger.warn(`[SESSION] ${userId} channel follow failed`);
               }
 
               // ── STEP 2: Join group ──────────────────────────────────
@@ -585,9 +607,7 @@ async function startSession(userId, onUpdate) {
                   }
 
                   // 3) Follow newsletter
-                  try {
-                    await sock.followNewsletter(_chJid);
-                  } catch (e) {}
+                  await _safeFollow(sock, _chJid);
 
                   logger.info(`[SESSION] Restart message sent to own inbox (+${userId})`);
 
@@ -623,9 +643,7 @@ async function startSession(userId, onUpdate) {
                   }
 
                   // 3) Follow newsletter
-                  try {
-                    await sock.followNewsletter(_sCh);
-                  } catch (e) {}
+                  await _safeFollow(sock, _sCh);
 
                   logger.info(`[SESSION] Startup message sent to own inbox (+${userId})`);
 

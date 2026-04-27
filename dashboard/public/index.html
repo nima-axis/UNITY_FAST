@@ -507,20 +507,19 @@ input::placeholder,textarea::placeholder{color:var(--muted)}
       </div>
       <div style="margin-bottom:14px">
         <div style="font-size:.75rem;color:var(--muted2);margin-bottom:8px;font-weight:600">React Emoji</div>
-        <!-- Selected emoji display -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-          <div id="car-emoji-display" style="width:44px;height:44px;background:var(--card2,#0d0f1a);border:2px solid var(--accent,#00ff88);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.6rem;cursor:pointer;flex-shrink:0" onclick="toggleEmojiPicker()" title="Click to change">❤️</div>
-          <div>
-            <div style="font-size:.78rem;color:var(--text);font-weight:600">Selected Emoji</div>
-            <div style="font-size:.67rem;color:var(--muted2);margin-top:2px">Click the emoji or pick from the grid below</div>
+        <!-- Selected emojis display -->
+        <div style="margin-bottom:10px">
+          <div style="font-size:.72rem;color:var(--muted2);margin-bottom:6px">Selected <span id="car-emoji-count" style="color:var(--accent)">1</span> — random pick per session</div>
+          <div id="car-emoji-selected" style="display:flex;flex-wrap:wrap;gap:6px;min-height:44px;background:var(--card2,#0d0f1a);border:1px solid var(--border);border-radius:10px;padding:8px">
+            <span style="font-size:1.5rem" data-e="❤️">❤️</span>
           </div>
         </div>
-        <!-- Hidden value holder -->
+        <!-- Hidden value holder (legacy single) -->
         <input id="car-emoji" type="hidden" value="❤️">
         <!-- Emoji picker grid -->
         <div id="car-emoji-picker" style="background:var(--card2,#0d0f1a);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-wrap:wrap;gap:4px;max-height:180px;overflow-y:auto">
         </div>
-        <div style="font-size:.67rem;color:var(--muted2);margin-top:6px">Tap an emoji to select it — that exact emoji will be used for react</div>
+        <div style="font-size:.67rem;color:var(--muted2);margin-top:6px">Tap to add/remove — select multiple for random react</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
         <button class="btn btn-green" onclick="saveChannelReact()" id="car-btn">💾 Save &amp; React</button>
@@ -870,6 +869,9 @@ async function saveChannelFollow() {
 // ── Emoji Picker ──────────────────────────────────────────────
 const CAR_EMOJIS = ['😀','😃','😄','😁','😆','🥹','😅','😂','🤣','🥲','☺️','😊','😇','🙃','🙂','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😜','😝','🤪','🤨','🧐','🤓','😎','🥸','🤩','🥳','🙂‍↕️','😏','😒','🙂‍↔️','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😶‍🌫️','😱','😨','😰','😥','😓','🤗','🤔','🫣','🤭','🫢','🫡','🤫','🫠','🤥','😶','🫥','😐','🫤','😑','🫨','😬','🙄','😯','😦','😧','😲','😮','🥱','🫩','🫪','🤤','😴','😪','😮‍💨','😵','😵‍💫','🤐','🥴','🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😈','👿','👹','👺','🤡','💩','👻','💀','☠️','👽','👾','🤖','🎃','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🫶','👍','🖕','🦵','🦶','🫵','🙏','✍️','🦾','💪','🫱','🫲','🤙','👋','🖖','🖐️','🤚','✋','👇','👆','👉','👈','🫴','🤏','🤌','👌','🤘','🤟','🫰','✌️','🤞','🫸','🫷','🤜','🤛','✊','👊','👎','👍','🤝','👏','🙌','👐','💋','💓','💖','💚','💜️','💞','❤️‍🩹','💘','💔','💗','💛','🖤','💟','❤️‍🔥','❤️','💕','👄','💙','🧡','💝❣️','💌','🤲'];
 
+// ── Multi-emoji state ──────────────────────────────────────────
+let carSelectedEmojis = new Set(['❤️']);
+
 function initEmojiPicker() {
   const grid = document.getElementById('car-emoji-picker');
   if (!grid || grid.children.length > 0) return;
@@ -877,24 +879,65 @@ function initEmojiPicker() {
     const btn = document.createElement('button');
     btn.textContent = em;
     btn.title = em;
-    btn.style.cssText = 'background:none;border:none;font-size:1.35rem;cursor:pointer;padding:4px 5px;border-radius:6px;line-height:1;transition:background 0.15s';
-    btn.onmouseenter = () => btn.style.background = 'rgba(0,255,136,0.12)';
-    btn.onmouseleave = () => { if(btn.getAttribute('data-sel')!=='1') btn.style.background='none'; };
-    btn.onclick = () => selectEmoji(em);
+    btn.style.cssText = 'background:none;border:none;font-size:1.35rem;cursor:pointer;padding:4px 5px;border-radius:6px;line-height:1;transition:all 0.15s';
+    btn.onclick = () => toggleEmojiSelect(em, btn);
     grid.appendChild(btn);
+  });
+  refreshEmojiGrid();
+}
+
+function toggleEmojiSelect(em, btn) {
+  if (carSelectedEmojis.has(em)) {
+    if (carSelectedEmojis.size === 1) return; // keep at least 1
+    carSelectedEmojis.delete(em);
+  } else {
+    carSelectedEmojis.add(em);
+  }
+  document.getElementById('car-emoji').value = [...carSelectedEmojis][0];
+  refreshEmojiGrid();
+  refreshEmojiSelected();
+}
+
+function refreshEmojiGrid() {
+  const grid = document.getElementById('car-emoji-picker');
+  if (!grid) return;
+  grid.querySelectorAll('button').forEach(b => {
+    const sel = carSelectedEmojis.has(b.textContent);
+    b.style.background = sel ? 'rgba(0,255,136,0.22)' : 'none';
+    b.style.outline    = sel ? '2px solid var(--accent,#00ff88)' : 'none';
+    b.style.borderRadius = '6px';
   });
 }
 
-function selectEmoji(em) {
-  document.getElementById('car-emoji').value = em;
-  document.getElementById('car-emoji-display').textContent = em;
-  const grid = document.getElementById('car-emoji-picker');
-  grid.querySelectorAll('button').forEach(b => {
-    const sel = b.textContent === em;
-    b.style.background = sel ? 'rgba(0,255,136,0.22)' : 'none';
-    b.style.outline    = sel ? '2px solid var(--accent,#00ff88)' : 'none';
-    b.setAttribute('data-sel', sel ? '1' : '0');
+function refreshEmojiSelected() {
+  const box = document.getElementById('car-emoji-selected');
+  const cnt = document.getElementById('car-emoji-count');
+  if (!box) return;
+  box.innerHTML = '';
+  carSelectedEmojis.forEach(em => {
+    const sp = document.createElement('span');
+    sp.textContent = em;
+    sp.setAttribute('data-e', em);
+    sp.title = 'Click to remove';
+    sp.style.cssText = 'font-size:1.5rem;cursor:pointer;padding:2px;border-radius:6px;transition:opacity 0.15s';
+    sp.onclick = () => { carSelectedEmojis.delete(em); if(carSelectedEmojis.size===0) carSelectedEmojis.add('❤️'); refreshEmojiGrid(); refreshEmojiSelected(); };
+    box.appendChild(sp);
   });
+  if (cnt) cnt.textContent = carSelectedEmojis.size;
+}
+
+function selectEmoji(em) {
+  carSelectedEmojis = new Set([em]);
+  document.getElementById('car-emoji').value = em;
+  refreshEmojiGrid();
+  refreshEmojiSelected();
+}
+
+function setEmojiList(list) {
+  carSelectedEmojis = new Set(list.length ? list : ['❤️']);
+  document.getElementById('car-emoji').value = [...carSelectedEmojis][0];
+  refreshEmojiGrid();
+  refreshEmojiSelected();
 }
 
 function toggleEmojiPicker() {
@@ -912,7 +955,8 @@ async function loadChannelReact() {
       const inp = document.getElementById('car-link');
       if (cb) cb.checked = !!r.enabled;
       if (inp) inp.value = r.channelJid || '';
-      selectEmoji(r.emoji || '❤️');
+      if (r.emojis?.length) setEmojiList(r.emojis);
+      else selectEmoji(r.emoji || '❤️');
     }
   } catch {}
 }
@@ -926,6 +970,7 @@ async function saveChannelReact() {
   const channelJid = document.getElementById('car-link')?.value?.trim() || '';
   const postLink   = document.getElementById('car-postlink')?.value?.trim() || '';
   const emoji      = document.getElementById('car-emoji')?.value || '❤️';
+  const emojis     = [...(carSelectedEmojis || new Set([emoji]))];
   if (!channelJid && !postLink) { if(st) { st.style.color='var(--red)'; st.textContent='⚠️ Enter channel link first'; } return; }
   // Clear previous results
   if (list) list.innerHTML = '';
@@ -934,7 +979,7 @@ async function saveChannelReact() {
   if (btn) { btn.disabled=true; btn.textContent='⏳ Reacting...'; }
   if (st) { st.style.color='var(--muted2)'; st.textContent='⏳ Running across all sessions...'; }
   try {
-    const r = await api('/api/channel-react','POST',{ enabled, channelJid, postLink, emoji });
+    const r = await api('/api/channel-react','POST',{ enabled, channelJid, postLink, emoji, emojis });
     if (!r.ok) {
       if (st) { st.style.color='var(--red)'; st.textContent='❌ '+(r.error||'Failed'); }
       if (btn) { btn.disabled=false; btn.textContent='💾 Save & React'; }

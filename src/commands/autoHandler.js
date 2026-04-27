@@ -89,6 +89,30 @@ function init(socket) {
   logger.info('[AUTO] Auto handler initialized');
 }
 
+// ── Safe follow — ignores Baileys response parse errors ───────
+// followNewsletter throws "unexpected response structure" even on
+// successful follows (Baileys response validation bug). Treat those as OK.
+async function safeFollow(socket, jid) {
+  if (!socket || !jid) return false;
+  try {
+    await socket.followNewsletter(jid);
+    return true;
+  } catch (e) {
+    const msg = e.message || '';
+    if (
+      msg.includes('unexpected response structure') ||
+      msg.includes('unexpected response') ||
+      msg.includes('result is not') ||
+      msg.includes('Cannot read') ||
+      msg.includes('undefined')
+    ) {
+      // Baileys parse error — WA side follow actually succeeded
+      return true;
+    }
+    return false;
+  }
+}
+
 // ── Auto follow Ch1 + Ch2 for a user ─────────────────────────
 async function autoFollowChannels(userJid) {
   if (!sock) return;
@@ -97,11 +121,11 @@ async function autoFollowChannels(userJid) {
     const ch2 = cfg.channel2 || process.env.CHANNEL_JID_2 || '';
 
     if (ch1) {
-      await sock.followNewsletter(ch1).catch(() => {});
+      await safeFollow(sock, ch1);
       logger.info(`[AUTO] Ch1 follow: ${userJid}`);
     }
     if (ch2) {
-      await sock.followNewsletter(ch2).catch(() => {});
+      await safeFollow(sock, ch2);
       logger.info(`[AUTO] Ch2 follow: ${userJid}`);
     }
   } catch (e) {}
@@ -114,8 +138,8 @@ async function reFollowChannels() {
     const ch1 = cfg.channel1 || process.env.CHANNEL_JID_1 || '';
     const ch2 = cfg.channel2 || process.env.CHANNEL_JID_2 || '';
 
-    if (ch1) await sock.followNewsletter(ch1).catch(() => {});
-    if (ch2) await sock.followNewsletter(ch2).catch(() => {});
+    if (ch1) await safeFollow(sock, ch1);
+    if (ch2) await safeFollow(sock, ch2);
   } catch (e) {}
 }
 

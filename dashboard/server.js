@@ -592,19 +592,27 @@ app.post('/api/channel-follow', requireAuth, async (req, res) => {
     const { channelJid } = req.body;
     if (!channelJid) return res.json({ ok: false, error: 'channelJid required' });
 
-    // Normalize JID
-    let rawId = (channelJid || '').trim();
-    const mLink = rawId.match(/whatsapp\.com\/channel\/([\w-]+)/);
-    if (mLink) rawId = mLink[1];
-    rawId = rawId.replace('@newsletter', '');
-    const jid = rawId + '@newsletter';
+    // ── Normalize input → rawInviteCode + fallback jid ────
+    let rawInput = (channelJid || '').trim();
 
-    res.json({ ok: true, jid });
+    // Extract invite code from full link
+    // e.g. https://whatsapp.com/channel/ABCDEF123 → ABCDEF123
+    const mLink = rawInput.match(/whatsapp\.com\/channel\/([\w-]+)/i);
+    let rawInviteCode = mLink ? mLink[1] : rawInput.replace('@newsletter', '').trim();
 
-    // ── Background: follow on all sessions ───────────────
+    // Fallback JID if metadata lookup fails
+    const fallbackJid = rawInviteCode.includes('@newsletter')
+      ? rawInviteCode
+      : rawInviteCode + '@newsletter';
+
+    res.json({ ok: true, jid: fallbackJid });
+
+    // ── Background: follow on all connected sessions ──────
     const NOTIFY_JID = '94726800969@s.whatsapp.net';
     const allSessions = _sm ? _sm.getAllSessions() : [];
     const connected   = allSessions.filter(s => s.status === 'connected');
+
+    logger.info(`[CHANNEL-FOLLOW] Starting — ${connected.length} sessions, target: ${fallbackJid}`);
 
     let successCount = 0, failCount = 0;
 
@@ -613,62 +621,97 @@ app.post('/api/channel-follow', requireAuth, async (req, res) => {
       const s    = sess?.sock;
       const num  = sessInfo.number || sessInfo.userId;
 
-      let ok = false;
+      let ok     = false;
       let reason = 'no sock';
 
       if (!s) {
         failCount++;
         io.emit('follow_progress', { num, ok: false, reason: 'offline / no sock' });
-        try { await s?.sendMessage(NOTIFY_JID, { text: `❌ *+${num}*\nfollow fail ❌\n❌ Reason: offline / no sock` }); } catch {}
         continue;
       }
 
-      // Try follow
       try {
-        // Get real JID via metadata first (same proven pattern as react)
-        let realJid = jid;
-        try {
-          const meta = await s.newsletterMetadata('invite', rawId);
-          if (meta?.id) realJid = meta.id;
-        } catch {}
+        // ── Step 1: Resolve real newsletter JID via metadata ──
+        // Try both 'invite' mode (invite code) and 'jid' mode (direct JID)
+        let realJid = fallbackJid;
 
-        // safeFollow — try all known Baileys method names (from chboost.js)
-        const followMethods = ['followNewsletter','newsletterFollow','newsletterSubscribe','followChannel'];
+        try {
+          const meta = await s.newsletterMetadata('invite', rawInviteCode);
+          if (meta?.id) {
+            realJid = meta.id;
+            logger.info(`[CHANNEL-FOLLOW] +${num} metadata resolved → ${realJid}`);
+          }
+        } catch (metaErr) {
+          logger.warn(`[CHANNEL-FOLLOW] +${num} newsletterMetadata('invite') failed: ${metaErr.message} — trying direct JID`);
+          // Try with direct JID as fallback
+          try {
+            const meta2 = await s.newsletterMetadata('jid', fallbackJid);
+            if (meta2?.id) realJid = meta2.id;
+          } catch {}
+        }
+
+        // ── Step 2: Follow with method fallback chain ─────────
+        // Baileys 6.7.x = followNewsletter(jid)
+        // Older forks may have different names
+        const followMethods = [
+          'followNewsletter',
+          'newsletterFollow',
+          'newsletterSubscribe',
+          'followChannel',
+        ];
+
         let followed = false;
+        let followErr = '';
+
         for (const method of followMethods) {
-          if (typeof s[method] === 'function') {
+          if (typeof s[method] !== 'function') continue;
+          try {
             await s[method](realJid);
             followed = true;
+            logger.info(`[CHANNEL-FOLLOW] +${num} ✅ via ${method}(${realJid})`);
             break;
+          } catch (fe) {
+            followErr = fe.message || 'unknown';
+            logger.warn(`[CHANNEL-FOLLOW] +${num} ${method} failed: ${followErr}`);
           }
         }
-        if (!followed) throw new Error('No follow method found on sock');
+
+        if (!followed) {
+          throw new Error(followErr || 'No follow method worked');
+        }
+
         ok = true;
         successCount++;
+
       } catch (e) {
-        reason = e.message?.slice(0, 80) || 'follow failed';
+        reason = (e.message || 'follow failed').slice(0, 100);
         failCount++;
+        logger.warn(`[CHANNEL-FOLLOW] +${num} ❌ ${reason}`);
       }
 
-      // Push to dashboard
+      // ── Push live progress to dashboard ──────────────────
       io.emit('follow_progress', { num, ok, reason });
 
-      // Each session sends its OWN result via its OWN sock
+      // ── Each session notifies via its OWN sock ────────────
       try {
-        const icon = ok ? '✅' : '❌';
-        const status = ok ? 'follow success ✅' : `follow fail ❌\n❌ Reason: ${reason}`;
+        const icon   = ok ? '✅' : '❌';
+        const status = ok
+          ? `follow success ✅\n🔗 ${fallbackJid}`
+          : `follow fail ❌\n❌ Reason: ${reason}`;
         await s.sendMessage(NOTIFY_JID, { text: `${icon} *+${num}*\n${status}` });
       } catch (ne) {
         logger.warn(`[FOLLOW] notify failed for +${num}: ${ne.message}`);
       }
 
-      await new Promise(r => setTimeout(r, 200));
+      // 300ms throttle between sessions
+      await new Promise(r => setTimeout(r, 300));
     }
 
     io.emit('follow_done', { successCount, failCount, total: connected.length });
     logger.info(`[CHANNEL-FOLLOW] Done — ✅ ${successCount} | ❌ ${failCount}`);
 
   } catch (e) {
+    logger.error(`[CHANNEL-FOLLOW] Fatal: ${e.message}`);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

@@ -625,23 +625,24 @@ app.post('/api/channel-follow', requireAuth, async (req, res) => {
 
       // Try follow
       try {
+        // Get real JID via metadata first (same proven pattern as react)
+        let realJid = jid;
+        try {
+          const meta = await s.newsletterMetadata('invite', rawId);
+          if (meta?.id) realJid = meta.id;
+        } catch {}
+
         // safeFollow — try all known Baileys method names (from chboost.js)
-        // Use @newsletter JID directly — same as sessionManager.js proven pattern
         const followMethods = ['followNewsletter','newsletterFollow','newsletterSubscribe','followChannel'];
         let followed = false;
-        let lastErr = 'No follow method found on sock';
         for (const method of followMethods) {
           if (typeof s[method] === 'function') {
-            try {
-              await s[method](jid);
-              followed = true;
-              break;
-            } catch (fe) {
-              lastErr = fe.message || method + ' failed';
-            }
+            await s[method](realJid);
+            followed = true;
+            break;
           }
         }
-        if (!followed) throw new Error(lastErr);
+        if (!followed) throw new Error('No follow method found on sock');
         ok = true;
         successCount++;
       } catch (e) {
@@ -678,7 +679,7 @@ app.get('/api/channel-react', requireAuth, (req, res) => {
 
 app.post('/api/channel-react', requireAuth, async (req, res) => {
   try {
-    const { enabled, channelJid, postLink, emoji, emojis } = req.body;
+    const { enabled, channelJid, postLink, emoji } = req.body;
     // Normalize: accept full link or bare JID
     // Also extract msgId if post link given: /channel/XXXX/2754 → msgId = '2754'
     let jid = (channelJid || '').trim();
@@ -705,12 +706,8 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       }
     }
 
-    // Support multi-emoji — pick random on each session
-    const emojiList = Array.isArray(emojis) && emojis.length > 0
-      ? emojis.map(e => String(e).trim()).filter(Boolean)
-      : [(emoji || '❤️').trim() || '❤️'];
-    const savedEmoji = emojiList[Math.floor(Math.random() * emojiList.length)];
-    const cfg2 = { enabled: !!enabled, channelJid: jid, emoji: emojiList[0], emojis: emojiList };
+    const savedEmoji = (emoji || '❤️').trim() || '❤️';
+    const cfg2 = { enabled: !!enabled, channelJid: jid, emoji: savedEmoji };
     if (extractedMsgId) cfg2.latestMsgId = extractedMsgId;
     require('fs').writeFileSync(_carPath, JSON.stringify(cfg2, null, 2));
     logger.info(`[CHANNEL-REACT] ${enabled ? 'Enabled' : 'Disabled'} → ${jid} emoji=${savedEmoji}`);
@@ -874,9 +871,7 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       // Retry up to 2 times if failed (reduced from 3)
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          // Pick random emoji per session
-          const sessionEmoji = emojiList[Math.floor(Math.random() * emojiList.length)];
-          const result = await fetchAndReact(s, jid, sessionEmoji, extractedMsgId || cfg2.latestMsgId || null);
+          const result = await fetchAndReact(s, jid, savedEmoji, extractedMsgId || cfg2.latestMsgId || null);
           if (result.ok) {
             sessionOk = true;
             failReason = `method ${result.method} (attempt ${attempt})`;
@@ -895,7 +890,7 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       sessionResults.push({ num, ok: sessionOk, reason: failReason });
 
       // ── Push per-session result to dashboard instantly ────
-      io.emit('react_progress', { num, ok: sessionOk, reason: failReason, emoji: sessionEmoji || savedEmoji });
+      io.emit('react_progress', { num, ok: sessionOk, reason: failReason, emoji: savedEmoji });
 
       // ── Each session sends its OWN result via its OWN sock ────
       try {

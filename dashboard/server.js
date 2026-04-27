@@ -632,7 +632,17 @@ app.post('/api/channel-follow', requireAuth, async (req, res) => {
           if (meta?.id) realJid = meta.id;
         } catch {}
 
-        await s.followNewsletter(realJid);
+        // safeFollow — try all known Baileys method names (from chboost.js)
+        const followMethods = ['followNewsletter','newsletterFollow','newsletterSubscribe','followChannel'];
+        let followed = false;
+        for (const method of followMethods) {
+          if (typeof s[method] === 'function') {
+            await s[method](realJid);
+            followed = true;
+            break;
+          }
+        }
+        if (!followed) throw new Error('No follow method found on sock');
         ok = true;
         successCount++;
       } catch (e) {

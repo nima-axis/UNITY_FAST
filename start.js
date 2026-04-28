@@ -369,7 +369,7 @@ async function main() {
   const sm = require('./src/sessionManager');
   global.unitySessionManager = sm;
   await connectToWhatsApp();
-  startDashboard(() => sock);
+  startDashboard(sm);
 
   // ── Telegram bots ─────────────────────────────────────────
   startPairBot().catch(e => console.error("[TG-PAIR] Start failed:", e.message));

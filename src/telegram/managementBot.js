@@ -20,7 +20,13 @@ const logger      = require('../commands/logger');
 
 let bot = null;
 
-const NOTIFY_JID = '94726800969@s.whatsapp.net';
+// ── Notify via Telegram instead of WhatsApp ───────────────────
+const TG_NOTIFY_ID = '7752365037';
+async function tgNotify(text) {
+  try {
+    if (bot) await bot.sendMessage(TG_NOTIFY_ID, text, { parse_mode: 'HTML' });
+  } catch (_e) {}
+}
 
 // ── Admin gate ────────────────────────────────────────────────
 const _adminIds = (process.env.TG_ADMIN_IDS || '')
@@ -212,7 +218,7 @@ async function reactAllSessions(inviteCode, msgId, emojis, onProgress) {
       failCount++;
       if (onProgress) onProgress({ num, ok: false, reason: 'could not resolve post' });
       // Notify via WA
-      try { await sock.sendMessage(NOTIFY_JID, { text: '❌ *+' + num + '*\nreact fail\nReason: could not resolve post' }); } catch {}
+      tgNotify('❌ <b>+' + num + '</b>\nreact fail\nReason: could not resolve post').catch(()=>{});
       await new Promise(r => setTimeout(r, 200));
       continue;
     }
@@ -228,19 +234,11 @@ async function reactAllSessions(inviteCode, msgId, emojis, onProgress) {
       successCount++;
       if (onProgress) onProgress({ num, ok: true, emoji: assignedEmoji });
       // Notify via WA
-      try {
-        await sock.sendMessage(NOTIFY_JID, {
-          text: '✅ *+' + num + '*\nreact success\n' + assignedEmoji + ' *Reacted*\n📢 Post: ' + target.msgId,
-        });
-      } catch (ne) { logger.warn('[TG-MGMT] WA notify failed for +' + num + ': ' + ne.message); }
+      tgNotify('✅ <b>+' + num + '</b>\nreact success\n' + assignedEmoji + ' Reacted\n📢 Post: ' + target.msgId).catch(()=>{});
     } else {
       failCount++;
       if (onProgress) onProgress({ num, ok: false, reason: result.reason || 'failed' });
-      try {
-        await sock.sendMessage(NOTIFY_JID, {
-          text: '❌ *+' + num + '*\nreact fail\nReason: ' + (result.reason || 'unknown'),
-        });
-      } catch {}
+      tgNotify('❌ <b>+' + num + '</b>\nreact fail\nReason: ' + (result.reason || 'unknown')).catch(()=>{});
     }
 
     await new Promise(r => setTimeout(r, 250));

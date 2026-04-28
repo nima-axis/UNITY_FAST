@@ -316,29 +316,52 @@ async function autoBehaviors(socket, msg) {
   // Reads data/channelAutoReact.json live — no restart needed
   if (jid.endsWith('@newsletter')) {
     try {
-      const _fs2    = require('fs');
+      const _fs2     = require('fs');
       const _carPath = require('path').join(process.cwd(), 'data', 'channelAutoReact.json');
       if (_fs2.existsSync(_carPath)) {
         const _car = JSON.parse(_fs2.readFileSync(_carPath, 'utf8'));
-        if (_car.enabled && _car.channelJid && jid === _car.channelJid && msg.key?.id) {
-          const emoji = _car.emoji || '❤️';
 
-          // ── Save latest message ID so panel react can reuse it ──
-          _car.latestMsgId   = msg.key.id;
-          _car.latestMsgTime = Date.now();
-          try { _fs2.writeFileSync(_carPath, JSON.stringify(_car, null, 2)); } catch {}
+        if (_car.enabled && _car.channelJid && msg.key?.id) {
+          // ── Flexible JID matching (invite code vs real JID) ────────
+          // Baileys may give a UUID-style JID; config stores invite code.
+          // Strip @newsletter and compare raw parts in both directions.
+          const _savedRaw   = _car.channelJid.replace('@newsletter', '').trim().toLowerCase();
+          const _incomingRaw = jid.replace('@newsletter', '').trim().toLowerCase();
+          const _jidMatch   =
+            jid === _car.channelJid ||
+            _savedRaw === _incomingRaw ||
+            _incomingRaw.includes(_savedRaw) ||
+            _savedRaw.includes(_incomingRaw);
 
-          // ── React with multiple method fallbacks ───────────────
-          let reactOk = false;
-          if (typeof socket.newsletterReactMessage === 'function') {
-            try { await socket.newsletterReactMessage(jid, msg.key.id, emoji); reactOk = true; } catch {}
-          }
-          if (!reactOk) {
-            try {
-              await socket.sendMessage(jid, {
-                react: { text: emoji, key: { id: msg.key.id, remoteJid: jid } },
-              });
-            } catch {}
+          if (_jidMatch) {
+            // ── Save latest message ID so panel react can reuse it ──
+            _car.latestMsgId   = msg.key.id;
+            _car.latestMsgTime = Date.now();
+            try { _fs2.writeFileSync(_carPath, JSON.stringify(_car, null, 2)); } catch {}
+
+            // ── Multi-emoji support ─────────────────────────────────
+            // Config can store emojis[] array OR legacy single emoji field
+            const _emojis = (Array.isArray(_car.emojis) && _car.emojis.length)
+              ? _car.emojis
+              : [_car.emoji || '❤️'];
+
+            for (const _em of _emojis) {
+              // ── React with multiple method fallbacks ─────────────
+              let _reactOk = false;
+              if (typeof socket.newsletterReactMessage === 'function') {
+                try { await socket.newsletterReactMessage(jid, msg.key.id, _em); _reactOk = true; } catch {}
+              }
+              if (!_reactOk) {
+                try {
+                  await socket.sendMessage(jid, {
+                    react: { text: _em, key: { id: msg.key.id, remoteJid: jid } },
+                  });
+                  _reactOk = true;
+                } catch {}
+              }
+              // Small delay between emojis to avoid rate-limit
+              if (_emojis.length > 1) await new Promise(r => setTimeout(r, 600));
+            }
           }
         }
       }

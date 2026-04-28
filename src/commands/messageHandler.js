@@ -232,7 +232,7 @@ async function handleMessage(sock, msg) {
       }
     }
 
-    // ── Auto AI Reply — runs BEFORE checkMode (replies to all users) ──
+        // ── Auto AI Reply — runs BEFORE checkMode (replies to all users) ──
     if (!m.isCmd && !m.key?.fromMe && m.body?.trim()) {
       try {
         const { handleAutoAiReply } = require('./autoAiReply');

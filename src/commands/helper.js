@@ -199,88 +199,20 @@ async function sendButtons(sock, jid, { text, footer = '', buttons = [], quoted 
     buttons = [...buttons, { label: '📋 Menu', id: '.menu' }];
   }
 
-  // ── Reply-number support: append numbered list + store mapping ──
+  // ── Store reply-number mapping ───────────────────────────────
   if (!global.pendingButtonReplies) global.pendingButtonReplies = new Map();
-  const numberedLines = buttons.map((b, i) => `  *${i + 1}.* ${b.label}`).join('\n');
-  text = `${text}\n\n${numberedLines}\n\n_↩ reply with a number_`;
   global.pendingButtonReplies.set(jid, buttons.map(b => b.id));
 
-  const {
-    generateWAMessageFromContent,
-    proto,
-  } = require('@whiskeysockets/baileys');
+  // ── Build plain text with numbered list ──────────────────────
+  const numberedLines = buttons.map((b, i) => `  *${i + 1}.* ${b.label}`).join('\n');
+  const fullText = `${text}\n\n${numberedLines}\n\n_\u21a9 reply with a number_` +
+    (footer ? `\n\n${footer}` : '');
 
-  const btn = buttons.map(b => ({
-    name: 'quick_reply',
-    buttonParamsJson: JSON.stringify({
-      display_text: b.label,
-      id: b.id,
-    }),
-  }));
+  // ── Send as plain text message ───────────────────────────────
+  const sendOpts = quoted ? { quoted } : {};
+  const msg = await sock.sendMessage(jid, { text: fullText }, sendOpts);
 
-  // ── Build header: embed image if available (image + caption + buttons = ONE message) ──
-  let header;
-  if (global._cmdPoolImage) {
-    try {
-      const { prepareWAMessageMedia } = require('@whiskeysockets/baileys');
-      const mediaContent = await prepareWAMessageMedia(
-        { image: global._cmdPoolImage },
-        { upload: sock.waUploadToServer }
-      );
-      header = proto.Message.InteractiveMessage.Header.create({
-        hasMediaAttachment: true,
-        imageMessage: mediaContent.imageMessage,
-      });
-    } catch {
-      // If media prep fails, fall back to no-image header
-      header = proto.Message.InteractiveMessage.Header.create({
-        hasMediaAttachment: false,
-      });
-    }
-  } else {
-    header = proto.Message.InteractiveMessage.Header.create({
-      hasMediaAttachment: false,
-    });
-  }
-
-  const msg = await generateWAMessageFromContent(jid, {
-    viewOnceMessage: {
-      message: {
-        messageContextInfo: {
-          deviceListMetadata: {},
-          deviceListMetadataVersion: 2,
-        },
-        interactiveMessage: proto.Message.InteractiveMessage.create({
-          body: proto.Message.InteractiveMessage.Body.create({ text }),
-          footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
-          header,
-          nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-            buttons: btn,
-          }),
-          contextInfo: fakeStatusCtx(),
-        }),
-      },
-    },
-  }, {});
-
-  await sock.relayMessage(msg.key.remoteJid, msg.message, {
-    messageId: msg.key.id,
-    additionalNodes: [{
-      tag: 'biz',
-      attrs: {},
-      content: [{
-        tag: 'interactive',
-        attrs: { type: 'native_flow', v: '1' },
-        content: [{
-          tag: 'native_flow',
-          attrs: { v: '9', name: 'mixed' },
-        }],
-      }],
-    }],
-  });
-
-  // Track this bot message for auto-delete
-  // Skip tracking for menu/settings buttons — they have their own tracker
+  // ── Track for auto-delete ─────────────────────────────────────
   if (msg?.key && global.botMsgTracker && global.currentCmd) {
     const menuCmds = ['menu','help','m','menu_ai','menu_media','menu_tools',
       'menu_texttools','menu_fun','menu_games','menu_srilanka','menu_group',
@@ -296,77 +228,18 @@ async function sendButtons(sock, jid, { text, footer = '', buttons = [], quoted 
     }
   }
 
-  // ── Track last button message per chat (for auto-delete on button tap) ──
-  if (msg?.key) {
-    if (!global.lastButtonMsg) global.lastButtonMsg = new Map();
-    // Collect any related messages (neko image etc.) tracked before this button send
-    const relatedKeys = global.lastButtonMsgRelated?.get(jid) || [];
-    global.lastButtonMsg.set(jid, { buttonKey: msg.key, relatedKeys });
-    // Clear related tracker now that they're linked to this button message
-    if (global.lastButtonMsgRelated) global.lastButtonMsgRelated.delete(jid);
-  }
-
   return msg;
 }
 
-// ── URL Buttons (open_url type — opens browser) ───────────────
-// Each button: { label: string, url: string }
-// Max 3 buttons per message — split externally if more
+
+// ── sendUrlButtons: plain text fallback (URL buttons not supported) ──────────
 async function sendUrlButtons(sock, jid, { text, footer = '', buttons = [], quoted = null }) {
-  const {
-    generateWAMessageFromContent,
-    proto,
-  } = require('@whiskeysockets/baileys');
-
-  const btn = buttons.slice(0, 3).map(b => ({
-    name: 'cta_url',
-    buttonParamsJson: JSON.stringify({
-      display_text: b.label,
-      url: b.url,
-      merchant_url: b.url,
-    }),
-  }));
-
-  const msg = await generateWAMessageFromContent(jid, {
-    viewOnceMessage: {
-      message: {
-        messageContextInfo: {
-          deviceListMetadata: {},
-          deviceListMetadataVersion: 2,
-        },
-        interactiveMessage: proto.Message.InteractiveMessage.create({
-          body: proto.Message.InteractiveMessage.Body.create({ text }),
-          footer: proto.Message.InteractiveMessage.Footer.create({ text: footer }),
-          header: proto.Message.InteractiveMessage.Header.create({
-            hasMediaAttachment: false,
-          }),
-          nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
-            buttons: btn,
-          }),
-          contextInfo: fakeStatusCtx(),
-        }),
-      },
-    },
-  }, {});
-
-  await sock.relayMessage(msg.key.remoteJid, msg.message, {
-    messageId: msg.key.id,
-    additionalNodes: [{
-      tag: 'biz',
-      attrs: {},
-      content: [{
-        tag: 'interactive',
-        attrs: { type: 'native_flow', v: '1' },
-        content: [{
-          tag: 'native_flow',
-          attrs: { v: '9', name: 'mixed' },
-        }],
-      }],
-    }],
-  });
-
-  return msg;
+  const lines = buttons.map((b, i) => `  *${i + 1}.* ${b.label}\n     ${b.url}`).join('\n');
+  const fullText = `${text}\n\n${lines}` + (footer ? `\n\n${footer}` : '');
+  const sendOpts = quoted ? { quoted } : {};
+  return sock.sendMessage(jid, { text: fullText }, sendOpts);
 }
+
 
 module.exports = {
   formatBytes, formatDuration, getUptime,

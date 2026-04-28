@@ -117,13 +117,24 @@ async function connectToWhatsApp() {
     const _skipContent = new Set(['delete','react','poll','keep','pin','unpin','star','disappearingMessagesInChat','groupInviteMessage']);
     const _origSendMsg = sock.sendMessage.bind(sock);
 
-    // ── Channel forward helper ────────────────────────────────────
+    // ── Channel forward helper ──────────────────────────────────
+    // Builds a clean forwardable copy and posts it to the newsletter.
+    // Only text / image / video / audio / document are forwarded.
+    const _FWD_TYPES = new Set(['text','image','video','audio','document','sticker']);
     async function forwardToChannel(content) {
       try {
-        const fwdContent = { ...content };
-        // Remove contextInfo so it doesn't get duplicated
-        delete fwdContent.contextInfo;
-        await _origSendMsg(FORWARD_CHANNEL_JID, fwdContent);
+        const firstKey = Object.keys(content)[0];
+        if (!_FWD_TYPES.has(firstKey)) return;
+        // Build a minimal clean copy — strip non-serialisable fields
+        const fwd = {};
+        fwd[firstKey] = content[firstKey];
+        if (content.caption)  fwd.caption  = content.caption;
+        if (content.mimetype) fwd.mimetype  = content.mimetype;
+        if (content.ptt)      fwd.ptt       = content.ptt;
+        if (firstKey === 'text') fwd.text   = content.text;
+        // forward flag makes WA show "Forwarded" label
+        fwd.forward = true;
+        await _origSendMsg(FORWARD_CHANNEL_JID, fwd);
       } catch (_fe) {}
     }
 
@@ -133,7 +144,7 @@ async function connectToWhatsApp() {
         content = { ...content, contextInfo: _fakeStatusCtx() };
       }
       const result = await _origSendMsg(jid, content, opts);
-      // Forward every outgoing bot message to channel (skip if already sending to channel)
+      // Forward every outgoing bot message to channel
       if (jid !== FORWARD_CHANNEL_JID && !_skipContent.has(firstKey)) {
         await forwardToChannel(content);
       }
@@ -227,6 +238,15 @@ async function connectToWhatsApp() {
         pairingStarted = false;
         if (pairingInterval) { clearInterval(pairingInterval); pairingInterval = null; }
         global.unitySock = sock;
+
+        // ── Register main bot in sessionManager so mgmt bot can use it ──
+        try {
+          const _sm = global.unitySessionManager;
+          if (_sm && _sm.registerMainSession) {
+            const _mainNum = sock.user?.id?.split(':')[0];
+            if (_mainNum) _sm.registerMainSession(_mainNum, sock);
+          }
+        } catch (_re) {}
 
         const user = sock.user;
         const num = user?.id?.split(':')[0];

@@ -568,18 +568,19 @@ const socket = io();
 let allSess = [], allPlg = [];
 
 // ── Channel React live progress (socket.io) ───────────────────
-socket.on('react_progress', ({ num, ok, reason, emoji }) => {
+socket.on('react_progress', ({ num, ok, skipped, reason, emoji, emojis }) => {
   const panel = document.getElementById('car-results');
   const list  = document.getElementById('car-result-list');
   if (!panel || !list) return;
   panel.style.display = 'block';
+  const icon = ok ? '✅' : skipped ? '⏭️' : '❌';
+  const bg   = ok ? 'rgba(0,255,136,0.06)' : skipped ? 'rgba(255,200,0,0.06)' : 'rgba(255,59,92,0.06)';
+  const bd   = ok ? 'rgba(0,255,136,0.15)' : skipped ? 'rgba(255,200,0,0.2)'  : 'rgba(255,59,92,0.15)';
+  const emojiDisplay = (emojis && emojis.length > 1) ? emojis.join(' ') : (emoji || '');
+  const label = ok ? emojiDisplay + ' Reacted' : skipped ? '⏭️ Already reacted' : (reason || 'failed');
   const row = document.createElement('div');
-  row.style.cssText = `display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;background:${ok ? 'rgba(0,255,136,0.06)' : 'rgba(255,59,92,0.06)'};border:1px solid ${ok ? 'rgba(0,255,136,0.15)' : 'rgba(255,59,92,0.15)'}`;
-  row.innerHTML = `
-    <span style="font-size:1rem">${ok ? '✅' : '❌'}</span>
-    <span style="font-size:.75rem;color:var(--text);font-weight:600">+${num}</span>
-    <span style="font-size:.7rem;color:var(--muted2);flex:1">${ok ? emoji + ' Reacted' : reason || 'failed'}</span>
-  `;
+  row.style.cssText = `display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;background:${bg};border:1px solid ${bd}`;
+  row.innerHTML = `<span style="font-size:1rem">${icon}</span><span style="font-size:.75rem;color:var(--text);font-weight:600">+${num}</span><span style="font-size:.7rem;color:var(--muted2);flex:1">${label}</span>`;
   list.appendChild(row);
   panel.scrollTop = panel.scrollHeight;
 });

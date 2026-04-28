@@ -741,7 +741,7 @@ app.get('/api/channel-react', requireAuth, (req, res) => {
 
 app.post('/api/channel-react', requireAuth, async (req, res) => {
   try {
-    const { enabled, channelJid, postLink, emoji } = req.body;
+    const { enabled, channelJid, postLink, emoji, emojis } = req.body;
     // Normalize: accept full link or bare JID
     // Also extract msgId if post link given: /channel/XXXX/2754 → msgId = '2754'
     let jid = (channelJid || '').trim();
@@ -768,11 +768,15 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       }
     }
 
-    const savedEmoji = (emoji || '❤️').trim() || '❤️';
-    const cfg2 = { enabled: !!enabled, channelJid: jid, emoji: savedEmoji };
+    // Support multi-emoji: emojis[] array takes priority, fallback to single emoji
+    const savedEmojis = (Array.isArray(emojis) && emojis.length)
+      ? emojis.map(e => (e || '').trim()).filter(Boolean)
+      : [(emoji || '❤️').trim() || '❤️'];
+    const savedEmoji  = savedEmojis[0] || '❤️'; // legacy compat
+    const cfg2 = { enabled: !!enabled, channelJid: jid, emoji: savedEmoji, emojis: savedEmojis };
     if (extractedMsgId) cfg2.latestMsgId = extractedMsgId;
     require('fs').writeFileSync(_carPath, JSON.stringify(cfg2, null, 2));
-    logger.info(`[CHANNEL-REACT] ${enabled ? 'Enabled' : 'Disabled'} → ${jid} emoji=${savedEmoji}`);
+    logger.info(`[CHANNEL-REACT] ${enabled ? 'Enabled' : 'Disabled'} → ${jid} emojis=${savedEmojis.join(',')}`);
 
     // Respond immediately — don't block the HTTP request
     res.json({ ok: true, ...cfg2 });
@@ -930,21 +934,26 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
         continue;
       }
 
-      // Retry up to 2 times if failed (reduced from 3)
+      // Retry up to 2 times; react with ALL emojis in savedEmojis[]
       for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          const result = await fetchAndReact(s, jid, savedEmoji, extractedMsgId || cfg2.latestMsgId || null);
-          if (result.ok) {
-            sessionOk = true;
-            failReason = `method ${result.method} (attempt ${attempt})`;
-            break;
+        let anyOk = false;
+        for (const _em of savedEmojis) {
+          try {
+            const result = await fetchAndReact(s, jid, _em, extractedMsgId || cfg2.latestMsgId || null);
+            if (result.ok) {
+              anyOk = true;
+              failReason = `method ${result.method} (attempt ${attempt})`;
+            } else {
+              failReason = result.reason || 'all methods failed';
+            }
+          } catch (e2) {
+            failReason = (e2.message || 'unknown error').slice(0, 60);
           }
-          failReason = result.reason || 'all methods failed';
-        } catch (e2) {
-          failReason = (e2.message || 'unknown error').slice(0, 60);
+          if (savedEmojis.length > 1) await new Promise(r => setTimeout(r, 600));
         }
+        if (anyOk) { sessionOk = true; break; }
         if (!sessionOk && attempt < 2) {
-          await new Promise(r => setTimeout(r, 800)); // reduced: was 2s, 4s
+          await new Promise(r => setTimeout(r, 800));
         }
       }
 

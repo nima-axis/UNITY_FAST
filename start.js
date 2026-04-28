@@ -372,8 +372,8 @@ async function main() {
   startDashboard(() => sock);
 
   // ── Telegram bots ─────────────────────────────────────────
-  startPairBot();
-  startMgmtBot();
+  startPairBot().catch(e => console.error("[TG-PAIR] Start failed:", e.message));
+  startMgmtBot().catch(e => console.error("[TG-MGMT] Start failed:", e.message));
 }
 
 main();

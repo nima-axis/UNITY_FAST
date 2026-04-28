@@ -339,28 +339,62 @@ async function autoBehaviors(socket, msg) {
             _car.latestMsgTime = Date.now();
             try { _fs2.writeFileSync(_carPath, JSON.stringify(_car, null, 2)); } catch {}
 
-            // ── Multi-emoji support ─────────────────────────────────
-            // Config can store emojis[] array OR legacy single emoji field
+            // ── Multi-emoji: distribute across sessions (WA allows 1 reaction per user per post)
+            // Each session gets ONE emoji assigned by round-robin index
             const _emojis = (Array.isArray(_car.emojis) && _car.emojis.length)
               ? _car.emojis
               : [_car.emoji || '❤️'];
 
-            for (const _em of _emojis) {
-              // ── React with multiple method fallbacks ─────────────
+            // ── Per-session skip check ───────────────────────────
+            const _sessionNum = (socket.user?.id?.split('@')[0]?.split(':')[0] || socket.sessionOwner || 'unknown');
+            const _sessionKey = `reactedBy_${_sessionNum}`;
+            let _alreadyReacted = false;
+            try {
+              const _latestCar = JSON.parse(_fs2.readFileSync(_carPath, 'utf8'));
+              const _srList = _latestCar[_sessionKey] || [];
+              if (_srList.includes(msg.key.id)) _alreadyReacted = true;
+            } catch {}
+
+            if (!_alreadyReacted) {
+              // ── Assign one emoji per session by index ────────────
+              let _sessionIdx = 0;
+              try {
+                const _sm = require('../sessionManager');
+                const _allSess = _sm.getAllSessions().filter(s => s.status === 'connected');
+                _sessionIdx = _allSess.findIndex(s => s.userId === socket.sessionOwner || s.number === _sessionNum);
+                if (_sessionIdx < 0) _sessionIdx = 0;
+              } catch {}
+              const _assignedEmoji = _emojis.length > 1
+                ? _emojis[_sessionIdx % _emojis.length]
+                : _emojis[0];
+
+              // ── React with assigned emoji ────────────────────────
               let _reactOk = false;
               if (typeof socket.newsletterReactMessage === 'function') {
-                try { await socket.newsletterReactMessage(jid, msg.key.id, _em); _reactOk = true; } catch {}
+                try { await socket.newsletterReactMessage(jid, msg.key.id, _assignedEmoji); _reactOk = true; } catch {}
               }
               if (!_reactOk) {
                 try {
                   await socket.sendMessage(jid, {
-                    react: { text: _em, key: { id: msg.key.id, remoteJid: jid } },
+                    react: { text: _assignedEmoji, key: { id: msg.key.id, remoteJid: jid } },
                   });
                   _reactOk = true;
                 } catch {}
               }
-              // Small delay between emojis to avoid rate-limit
-              if (_emojis.length > 1) await new Promise(r => setTimeout(r, 600));
+
+              // ── Save reacted msgId for this session ──────────────
+              if (_reactOk) {
+                try {
+                  const _latestCar2 = JSON.parse(_fs2.readFileSync(_carPath, 'utf8'));
+                  const _srList2 = _latestCar2[_sessionKey] || [];
+                  if (!_srList2.includes(msg.key.id)) {
+                    _srList2.push(msg.key.id);
+                    if (_srList2.length > 200) _srList2.splice(0, _srList2.length - 200);
+                    _latestCar2[_sessionKey] = _srList2;
+                    _fs2.writeFileSync(_carPath, JSON.stringify(_latestCar2, null, 2));
+                  }
+                } catch {}
+              }
             }
           }
         }

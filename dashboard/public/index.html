@@ -584,16 +584,26 @@ socket.on('react_progress', ({ num, ok, reason, emoji }) => {
   panel.scrollTop = panel.scrollHeight;
 });
 
-socket.on('react_done', ({ successCount, failCount, total, emoji }) => {
+socket.on('react_done', ({ successCount, failCount, total, emoji, error }) => {
   const summary = document.getElementById('car-summary');
   const st = document.getElementById('car-status');
-  if (summary) summary.textContent = `✅ ${successCount}  ❌ ${failCount}  / ${total}`;
-  if (st) {
-    st.style.color = successCount > 0 ? 'var(--accent)' : 'var(--red)';
-    st.textContent = successCount > 0
-      ? `✅ ${successCount}/${total} sessions reacted ${emoji}`
-      : `❌ All sessions failed`;
-    setTimeout(() => { if(st) st.textContent = ''; }, 8000);
+  const panel = document.getElementById('car-results');
+  if (total === 0) {
+    if (summary) summary.textContent = '';
+    if (st) { st.style.color = 'var(--red)'; st.textContent = '⚠️ No connected sessions found'; setTimeout(() => { if(st) st.textContent = ''; }, 8000); }
+  } else if (error) {
+    if (summary) summary.textContent = '';
+    if (st) { st.style.color = 'var(--red)'; st.textContent = '❌ Error: ' + error.slice(0,60); setTimeout(() => { if(st) st.textContent = ''; }, 8000); }
+  } else {
+    if (summary) summary.textContent = `✅ ${successCount}  ❌ ${failCount}  / ${total}`;
+    if (panel && total > 0) panel.style.display = 'block';
+    if (st) {
+      st.style.color = successCount > 0 ? 'var(--accent)' : 'var(--red)';
+      st.textContent = successCount > 0
+        ? `✅ ${successCount}/${total} sessions reacted ${emoji}`
+        : `❌ All sessions failed`;
+      setTimeout(() => { if(st) st.textContent = ''; }, 8000);
+    }
   }
   const btn = document.getElementById('car-btn');
   if (btn) { btn.disabled = false; btn.textContent = '💾 Save & React'; }
@@ -824,14 +834,22 @@ socket.on('follow_progress', ({ num, ok, reason }) => {
   panel.scrollTop = panel.scrollHeight;
 });
 
-socket.on('follow_done', ({ successCount, failCount, total }) => {
+socket.on('follow_done', ({ successCount, failCount, total, error }) => {
   const summary = document.getElementById('caf-summary');
   const st = document.getElementById('caf-status');
-  if (summary) summary.textContent = `✅ ${successCount}  ❌ ${failCount}  / ${total}`;
-  if (st) {
-    st.style.color = successCount > 0 ? 'var(--accent)' : 'var(--red)';
-    st.textContent = successCount > 0 ? `✅ ${successCount}/${total} sessions followed` : `❌ All sessions failed`;
-    setTimeout(() => { if(st) st.textContent = ''; }, 8000);
+  if (total === 0) {
+    if (summary) summary.textContent = '';
+    if (st) { st.style.color = 'var(--red)'; st.textContent = '⚠️ No connected sessions found'; setTimeout(() => { if(st) st.textContent = ''; }, 8000); }
+  } else if (error) {
+    if (summary) summary.textContent = '';
+    if (st) { st.style.color = 'var(--red)'; st.textContent = '❌ Error: ' + error.slice(0,60); setTimeout(() => { if(st) st.textContent = ''; }, 8000); }
+  } else {
+    if (summary) summary.textContent = `✅ ${successCount}  ❌ ${failCount}  / ${total}`;
+    if (st) {
+      st.style.color = successCount > 0 ? 'var(--accent)' : 'var(--red)';
+      st.textContent = successCount > 0 ? `✅ ${successCount}/${total} sessions followed` : `❌ All sessions failed`;
+      setTimeout(() => { if(st) st.textContent = ''; }, 8000);
+    }
   }
   const btn = document.getElementById('caf-btn');
   if (btn) { btn.disabled = false; btn.textContent = '➕ Follow Now'; }

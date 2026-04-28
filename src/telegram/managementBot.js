@@ -173,7 +173,14 @@ async function reactOneEmoji(sock, target, emoji) {
 
 // React to a post across all sessions with multi-emoji round-robin
 async function reactAllSessions(inviteCode, msgId, emojis, onProgress) {
-  const sm = global.unitySessionManager;
+  let sm = global.unitySessionManager;
+  if (!sm) {
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      sm = global.unitySessionManager;
+      if (sm) break;
+    }
+  }
   if (!sm) return { successCount: 0, failCount: 0, total: 0, skippedReason: 'Session manager not ready' };
 
   const connected = sm.getAllSessions().filter(s => s.status === 'connected');
@@ -415,10 +422,17 @@ function start() {
   });
 
   // /which
-  bot.onText(/^\/which(@\S+)?$/, (msg) => {
+  bot.onText(/^\/which(@\S+)?$/, async (msg) => {
     if (!isAdmin(msg)) return;
-    const sm = global.unitySessionManager;
-    if (!sm) return bot.sendMessage(msg.chat.id, '❌ Session manager not ready.', { parse_mode: 'HTML' });
+    let sm = global.unitySessionManager;
+    if (!sm) {
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        sm = global.unitySessionManager;
+        if (sm) break;
+      }
+    }
+    if (!sm) return bot.sendMessage(msg.chat.id, '❌ Session manager not ready. Try again in a moment.', { parse_mode: 'HTML' });
     const all       = sm.getAllSessions();
     const connected = all.filter(s => s.status === 'connected');
     const pairing   = all.filter(s => s.status === 'pairing');
@@ -464,8 +478,15 @@ function start() {
       return bot.sendMessage(chatId, msgReactHelp(), { parse_mode: 'HTML', reply_markup: KB_BACK });
     }
 
-    const sm = global.unitySessionManager;
-    if (!sm) return bot.sendMessage(chatId, '❌ Session manager not ready.', { parse_mode: 'HTML' });
+    let sm = global.unitySessionManager;
+    if (!sm) {
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        sm = global.unitySessionManager;
+        if (sm) break;
+      }
+    }
+    if (!sm) return bot.sendMessage(chatId, '❌ Session manager not ready. Try again in a moment.', { parse_mode: 'HTML' });
 
     const connected = sm.getAllSessions().filter(s => s.status === 'connected');
     if (!connected.length) {
@@ -554,9 +575,16 @@ function start() {
       return;
     }
     if (data === 'cmd_which') {
-      const sm = global.unitySessionManager;
+      let sm = global.unitySessionManager;
       if (!sm) {
-        await bot.editMessageText('❌ Session manager not ready.', {
+        for (let i = 0; i < 5; i++) {
+          await new Promise(r => setTimeout(r, 1000));
+          sm = global.unitySessionManager;
+          if (sm) break;
+        }
+      }
+      if (!sm) {
+        await bot.editMessageText('❌ Session manager not ready. Try again in a moment.', {
           chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: KB_BACK,
         }).catch(() => {});
         return;

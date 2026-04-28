@@ -774,7 +774,10 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       ? emojis.map(e => (e || '').trim()).filter(Boolean)
       : [(emoji || '❤️').trim() || '❤️'];
     const savedEmoji  = savedEmojis[0] || '❤️'; // legacy compat
-    const cfg2 = { enabled: !!enabled, channelJid: jid, emoji: savedEmoji, emojis: savedEmojis };
+    // Load existing reactedMsgIds to preserve skip history
+    const _existingCar = readCarConfig();
+    const cfg2 = { enabled: !!enabled, channelJid: jid, emoji: savedEmoji, emojis: savedEmojis,
+      reactedMsgIds: _existingCar.reactedMsgIds || [] };
     if (extractedMsgId) cfg2.latestMsgId = extractedMsgId;
     require('fs').writeFileSync(_carPath, JSON.stringify(cfg2, null, 2));
     logger.info(`[CHANNEL-REACT] ${enabled ? 'Enabled' : 'Disabled'} → ${jid} emojis=${savedEmojis.join(',')}`);
@@ -874,23 +877,23 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
     }
 
     // ── Main: fetch posts + react with all fallbacks ───────────
-    async function fetchAndReact(sock, channelJid, emoji, knownMsgId = null) {
+    // ── Resolve msgId + realJid ONCE (shared across all emoji iterations) ──
+    async function resolveMsgTarget(sock, channelJid, knownMsgId = null) {
       if (!channelJid) return { ok: false, reason: 'no channel JID' };
 
-      // Extract raw channelId (invite code, no @newsletter) — same as channel.js
       let channelRawId = channelJid.replace('@newsletter', '').trim();
       const mLink = channelRawId.match(/whatsapp\.com\/channel\/([\w-]+)/);
       if (mLink) channelRawId = mLink[1];
 
       let msgId = null;
 
-      // Priority 1: msgId from post link (most reliable — exact post)
+      // Priority 1: explicit msgId from post link
       if (knownMsgId) {
         msgId = String(knownMsgId);
         logger.info(`[REACT] Using postLink msgId: ${msgId}`);
       }
 
-      // Priority 2: latestMsgId saved by autoHandler when post arrived
+      // Priority 2: latestMsgId saved by autoHandler
       if (!msgId) {
         try {
           const carCfg = JSON.parse(require('fs').readFileSync(_carPath, 'utf8'));
@@ -901,19 +904,57 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
         } catch {}
       }
 
-      // Priority 3: fetch from WhatsApp
+      // Priority 3: fetch latest post from WhatsApp
       if (!msgId) {
         logger.info(`[REACT] No saved msgId — fetching from WA...`);
         const realJid = channelRawId + '@newsletter';
         const msgs = await fetchMsgs(sock, realJid);
-        if (!msgs.length) return { ok: false, reason: 'no posts fetched & no saved msgId — paste post link' };
-        msgId = msgs[0]?.key?.id;
-        logger.info(`[REACT] Fetched msgId: ${msgId}`);
+        if (msgs.length) {
+          msgId = msgs[0]?.key?.id;
+          logger.info(`[REACT] Fetched msgId: ${msgId}`);
+        }
       }
 
-      if (!msgId) return { ok: false, reason: 'no msgId resolved' };
+      if (!msgId) return { ok: false, reason: 'no posts fetched & no saved msgId — paste post link' };
 
-      return await tryAllReactMethods(sock, channelRawId, null, msgId, emoji);
+      // ── Skip if already reacted to this post ─────────────
+      try {
+        const carCfg = JSON.parse(require('fs').readFileSync(_carPath, 'utf8'));
+        const reacted = carCfg.reactedMsgIds || [];
+        if (reacted.includes(msgId)) {
+          return { ok: false, skipped: true, reason: 'already reacted to this post', msgId };
+        }
+      } catch {}
+
+      // Resolve real newsletter JID once
+      let realJid = null;
+      try {
+        const meta = await sock.newsletterMetadata('invite', channelRawId);
+        realJid = meta?.id;
+      } catch {}
+      if (!realJid) realJid = channelRawId + '@newsletter';
+
+      return { ok: true, msgId, channelRawId, realJid };
+    }
+
+    // ── React a single emoji using resolved target ────────────
+    async function reactOneEmoji(sock, target, emoji) {
+      const { msgId, realJid } = target;
+      try {
+        await sock.newsletterReactMessage(realJid, msgId, emoji);
+        return { ok: true, method: 1 };
+      } catch (e1) {
+        logger.warn(`[REACT] method1(${emoji}) failed: ${e1.message}`);
+      }
+      try {
+        await sock.sendMessage(realJid, {
+          react: { text: emoji, key: { id: msgId, remoteJid: realJid } },
+        });
+        return { ok: true, method: 2 };
+      } catch (e2) {
+        logger.warn(`[REACT] method2(${emoji}) failed: ${e2.message}`);
+      }
+      return { ok: false, reason: 'all react methods failed' };
     }
 
     let successCount = 0, failCount = 0;
@@ -930,46 +971,74 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       if (!s) {
         failCount++;
         sessionResults.push({ num, ok: false, reason: 'offline / no sock' });
-        // ── Push to dashboard instantly via socket.io ──────
-        io.emit('react_progress', { num, ok: false, reason: 'offline / no sock', emoji: savedEmoji });
+        io.emit('react_progress', { num, ok: false, reason: 'offline / no sock', emoji: savedEmoji, emojis: savedEmojis });
         continue;
       }
 
-      // Retry up to 2 times; react with ALL emojis in savedEmojis[]
+      // ── Resolve msgId + realJid ONCE per session ──────────────
+      const knownId = extractedMsgId || cfg2.latestMsgId || null;
+      let target = null;
       for (let attempt = 1; attempt <= 2; attempt++) {
-        let anyOk = false;
-        for (const _em of savedEmojis) {
-          try {
-            const result = await fetchAndReact(s, jid, _em, extractedMsgId || cfg2.latestMsgId || null);
-            if (result.ok) {
-              anyOk = true;
-              failReason = `method ${result.method} (attempt ${attempt})`;
-            } else {
-              failReason = result.reason || 'all methods failed';
-            }
-          } catch (e2) {
-            failReason = (e2.message || 'unknown error').slice(0, 60);
+        const resolved = await resolveMsgTarget(s, jid, knownId);
+        if (resolved.ok) { target = resolved; break; }
+        failReason = resolved.reason;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+      }
+
+      if (!target) {
+        // Check if it was a skip (already reacted)
+        const wasSkipped = failReason && failReason.includes('already reacted');
+        if (!wasSkipped) failCount++;
+        sessionResults.push({ num, ok: false, skipped: wasSkipped, reason: failReason });
+        io.emit('react_progress', { num, ok: false, skipped: wasSkipped, reason: failReason, emoji: savedEmoji, emojis: savedEmojis });
+        continue;
+      }
+
+      // ── React with ALL emojis using same resolved target ──────
+      let emojiOkCount = 0;
+      for (const _em of savedEmojis) {
+        try {
+          const result = await reactOneEmoji(s, target, _em);
+          if (result.ok) {
+            emojiOkCount++;
+          } else {
+            failReason = result.reason || 'emoji react failed';
           }
-          if (savedEmojis.length > 1) await new Promise(r => setTimeout(r, 600));
+        } catch (e2) {
+          failReason = (e2.message || 'unknown error').slice(0, 60);
         }
-        if (anyOk) { sessionOk = true; break; }
-        if (!sessionOk && attempt < 2) {
-          await new Promise(r => setTimeout(r, 800));
-        }
+        if (savedEmojis.length > 1) await new Promise(r => setTimeout(r, 400));
+      }
+      sessionOk = emojiOkCount > 0;
+
+      // ── Save reacted msgId to skip list ───────────────────
+      if (sessionOk && target?.msgId) {
+        try {
+          const carCfg = JSON.parse(require('fs').readFileSync(_carPath, 'utf8'));
+          const reacted = carCfg.reactedMsgIds || [];
+          if (!reacted.includes(target.msgId)) {
+            reacted.push(target.msgId);
+            // Keep only last 200 msgIds to avoid bloat
+            if (reacted.length > 200) reacted.splice(0, reacted.length - 200);
+            carCfg.reactedMsgIds = reacted;
+            require('fs').writeFileSync(_carPath, JSON.stringify(carCfg, null, 2));
+          }
+        } catch {}
       }
 
       if (sessionOk) successCount++; else failCount++;
       sessionResults.push({ num, ok: sessionOk, reason: failReason });
 
       // ── Push per-session result to dashboard instantly ────
-      io.emit('react_progress', { num, ok: sessionOk, reason: failReason, emoji: savedEmoji });
+      io.emit('react_progress', { num, ok: sessionOk, reason: failReason, emoji: savedEmoji, emojis: savedEmojis });
 
       // ── Each session sends its OWN result via its OWN sock ────
       try {
         const icon = sessionOk ? '✅' : '❌';
-        const status = sessionOk ? `react success ✅` : `react fail ❌\n❌ Reason: ${failReason}`;
+        const emojiLine = sessionOk ? `\n${savedEmojis.join(' ')} *Reacted*` : `\n❌ Reason: ${failReason}`;
+        const channelLine = target ? `\n📢 Post: ${target.msgId}` : '';
         await s.sendMessage(NOTIFY_JID, {
-          text: `${icon} *+${num}*\n${status}`
+          text: `${icon} *+${num}*\n${sessionOk ? 'react success' : 'react fail'}${emojiLine}${channelLine}`
         });
       } catch (ne) {
         logger.warn(`[REACT] notify failed for +${num}: ${ne.message}`);

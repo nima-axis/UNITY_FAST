@@ -897,7 +897,32 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       if (!msgId) {
         logger.info(`[REACT] No saved msgId — fetching from WA...`);
         const realJid = channelRawId + '@newsletter';
-        const msgs = await fetchMsgs(sock, realJid);
+
+        // Try direct fetch first (works if session already follows channel)
+        let msgs = await fetchMsgs(sock, realJid);
+
+        // If empty, follow channel first then retry fetch
+        if (!msgs.length) {
+          logger.info(`[REACT] Direct fetch empty — following channel first...`);
+          try {
+            const followMethods = ['followNewsletter','newsletterFollow','newsletterSubscribe','followChannel'];
+            for (const m of followMethods) {
+              if (typeof sock[m] === 'function') { await sock[m](realJid); break; }
+            }
+            await new Promise(r => setTimeout(r, 1200));
+          } catch (fe) { logger.warn(`[REACT] Follow before fetch failed: ${fe.message}`); }
+          msgs = await fetchMsgs(sock, realJid);
+        }
+
+        // Last resort: try invite mode fetch with raw channel id
+        if (!msgs.length) {
+          try {
+            const res = await sock.newsletterFetchMessages('invite', channelRawId, 5);
+            const list = Array.isArray(res) ? res : res?.messages || [];
+            if (list.length) msgs = list;
+          } catch {}
+        }
+
         if (msgs.length) {
           msgId = msgs[0]?.key?.id;
           logger.info(`[REACT] Fetched msgId: ${msgId}`);

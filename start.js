@@ -21,6 +21,8 @@ const { handleMessage, loadPlugins, plugins } = require('./src/commands/messageH
 const { handleGroupJoin, handleGroupLeave } = require('./src/commands/groupHandler');
 const { init: initAuto, autoBehaviors, handleStatus, handleCall } = require('./src/commands/autoHandler');
 const { startDashboard } = require('./dashboard/server');
+const { start: startPairBot } = require('./src/telegram/pairBot');
+const { start: startMgmtBot } = require('./src/telegram/managementBot');
 
 function showBanner() {
   console.log(chalk.cyan(`
@@ -368,6 +370,10 @@ async function main() {
   global.unitySessionManager = sm;
   await connectToWhatsApp();
   startDashboard(() => sock);
+
+  // ── Telegram bots ─────────────────────────────────────────
+  startPairBot();
+  startMgmtBot();
 }
 
 main();

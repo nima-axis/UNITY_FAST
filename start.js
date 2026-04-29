@@ -304,16 +304,12 @@ async function connectToWhatsApp() {
               image: { url: THUMB_URL },
               caption: onlineMsg,
               contextInfo: {
-                isForwarded:     true,
+                isForwarded: true,
                 forwardingScore: 999,
-                externalAdReply: {
-                  title:                 'UNITY-MD',
-                  body:                  '® UNITY TEAM',
-                  thumbnailUrl:          THUMB_URL,
-                  sourceUrl:             _chUrl,
-                  mediaType:             1,
-                  renderLargerThumbnail: false,
-                  showAdAttribution:     true,
+                forwardedNewsletterMessageInfo: {
+                  newsletterJid:   '120363419201971095@newsletter',
+                  newsletterName:  'UNITY-MD',
+                  serverMessageId: -1,
                 },
               },
             };

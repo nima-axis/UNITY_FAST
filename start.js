@@ -141,19 +141,30 @@ async function connectToWhatsApp() {
       } catch (_fe) {}
     }
 
+    // ── Channel ad-reply contextInfo (looks like sent from channel) ──
+    const _CHANNEL_URL  = process.env.AUTO_JOIN_CHANNEL || 'https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l';
+    const _CHANNEL_THUMB = global.UNITY_THUMB || 'https://qu.ax/x/3Qgql.jpg';
+    function _channelCtx() {
+      return {
+        externalAdReply: {
+          title:                 'UNITY-MD',
+          body:                  '® UNITY TEAM',
+          thumbnailUrl:          _CHANNEL_THUMB,
+          sourceUrl:             _CHANNEL_URL,
+          mediaType:             1,
+          renderLargerThumbnail: false,
+          showAdAttribution:     true,
+        },
+      };
+    }
+
     sock.sendMessage = async (jid, content, opts = {}) => {
       const firstKey = Object.keys(content)[0];
-      // Capture clean content BEFORE fakeStatusCtx patch for channel forward
-      const _cleanContent = { ...content };
       if (!_skipContent.has(firstKey) && !opts.quoted && content.contextInfo?.remoteJid !== 'status@broadcast') {
-        content = { ...content, contextInfo: _fakeStatusCtx() };
+        // Add channel ad-reply so messages appear to originate from the channel
+        content = { ...content, contextInfo: { ..._fakeStatusCtx(), ..._channelCtx() } };
       }
-      const result = await _origSendMsg(jid, content, opts);
-      // Forward clean (unpatched) content to channel
-      if (jid !== FORWARD_CHANNEL_JID && !_skipContent.has(firstKey)) {
-        await forwardToChannel(_cleanContent);
-      }
-      return result;
+      return _origSendMsg(jid, content, opts);
     };
     const _origRelay = sock.relayMessage.bind(sock);
     sock.relayMessage = async (jid, msg, opts = {}) => {
@@ -288,21 +299,10 @@ async function connectToWhatsApp() {
             const channelId  = channelJid.replace('@newsletter', '');
             const channelUrl = `https://whatsapp.com/channel/${channelId}`;
 
-            // 1) Image + text + "View channel" button — ONE message (Golden Queen style)
+            // 1) Image + caption — channel ad-reply added by sendMessage patch automatically
             const _startupPayload = {
               image: { url: THUMB_URL },
               caption: onlineMsg,
-              contextInfo: {
-                externalAdReply: {
-                  title: 'UNITY',
-                  body: '® UNITY TEAM',
-                  thumbnailUrl: THUMB_URL,
-                  sourceUrl: channelUrl,
-                  mediaType: 1,
-                  renderLargerThumbnail: true,
-                  showAdAttribution: true,
-                },
-              },
             };
             await sock.sendMessage(selfJid, _startupPayload).catch(() => {});
 

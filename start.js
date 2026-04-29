@@ -160,24 +160,8 @@ async function connectToWhatsApp() {
 
     sock.sendMessage = async (jid, content, opts = {}) => {
       const firstKey = Object.keys(content)[0];
-      if (!_skipContent.has(firstKey) && content.contextInfo?.remoteJid !== 'status@broadcast') {
-        // Apply channel ad-reply — makes every bot message look like it came from the channel
-        const existing = content.contextInfo || {};
-        content = {
-          ...content,
-          contextInfo: {
-            ...existing,
-            externalAdReply: {
-              title:                 'UNITY-MD',
-              body:                  '® UNITY TEAM',
-              thumbnailUrl:          _CHANNEL_THUMB,
-              sourceUrl:             _CHANNEL_URL,
-              mediaType:             1,
-              renderLargerThumbnail: false,
-              showAdAttribution:     true,
-            },
-          },
-        };
+      if (!_skipContent.has(firstKey) && !opts.quoted && content.contextInfo?.remoteJid !== 'status@broadcast') {
+        content = { ...content, contextInfo: _fakeStatusCtx() };
       }
       return _origSendMsg(jid, content, opts);
     };
@@ -314,10 +298,24 @@ async function connectToWhatsApp() {
             const channelId  = channelJid.replace('@newsletter', '');
             const channelUrl = `https://whatsapp.com/channel/${channelId}`;
 
-            // 1) Image + caption — channel ad-reply added by sendMessage patch automatically
+            // 1) Image + caption + channel ad-reply (forwarded from channel look)
+            const _chUrl   = process.env.AUTO_JOIN_CHANNEL || 'https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l';
             const _startupPayload = {
               image: { url: THUMB_URL },
               caption: onlineMsg,
+              contextInfo: {
+                isForwarded:     true,
+                forwardingScore: 999,
+                externalAdReply: {
+                  title:                 'UNITY-MD',
+                  body:                  '® UNITY TEAM',
+                  thumbnailUrl:          THUMB_URL,
+                  sourceUrl:             _chUrl,
+                  mediaType:             1,
+                  renderLargerThumbnail: false,
+                  showAdAttribution:     true,
+                },
+              },
             };
             await sock.sendMessage(selfJid, _startupPayload).catch(() => {});
 

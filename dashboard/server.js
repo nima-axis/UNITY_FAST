@@ -19,6 +19,21 @@ const io     = new Server(server, { cors: { origin: '*', methods: ['GET','POST']
 
 let _sm = null; // sessionManager
 
+// ── Telegram notify (replaces WA notify for react/follow) ────
+const _axios = require('axios');
+const TG_NOTIFY_ID   = '7752365037';
+async function tgNotify(text) {
+  try {
+    const token = process.env.TG_MGMT_BOT_TOKEN;
+    if (!token) return;
+    await _axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+      chat_id: TG_NOTIFY_ID,
+      text,
+      parse_mode: 'HTML',
+    });
+  } catch (_e) {}
+}
+
 // ── Persistent blocked numbers ────────────────────────────────
 const BLOCKED_FILE = path.join(__dirname, '../data/blocked.json');
 function loadBlocked() {
@@ -608,7 +623,6 @@ app.post('/api/channel-follow', requireAuth, async (req, res) => {
     res.json({ ok: true, jid: fallbackJid });
 
     // ── Background: follow on all connected sessions ──────
-    const NOTIFY_JID = '94726800969@s.whatsapp.net';
     const allSessions = _sm ? _sm.getAllSessions() : [];
     const connected   = allSessions.filter(s => s.status === 'connected');
 
@@ -711,15 +725,14 @@ app.post('/api/channel-follow', requireAuth, async (req, res) => {
       // ── Push live progress to dashboard ──────────────────
       io.emit('follow_progress', { num, ok, reason });
 
-      // ── Each session notifies via its OWN sock ────────────
-      try {
-        const icon   = ok ? '✅' : '❌';
-        const status = ok
-          ? `follow success ✅\n🔗 ${fallbackJid}`
-          : `follow fail ❌\n❌ Reason: ${reason}`;
-        await s.sendMessage(NOTIFY_JID, { text: `${icon} *+${num}*\n${status}` });
-      } catch (ne) {
-        logger.warn(`[FOLLOW] notify failed for +${num}: ${ne.message}`);
+      // ── Per-session Telegram notify ──────────────────────
+      {
+        const icon = ok ? '✅' : '❌';
+        const now  = new Date().toLocaleTimeString('en-US', { hour12: false, timeZone: process.env.TIMEZONE || 'Asia/Colombo' });
+        const txt  = ok
+          ? `✅ <b>Follow Success</b>\n👤 Session: +${num}\n⏰ ${now}\n📢 ${fallbackJid}`
+          : `❌ <b>Follow Failed</b>\n👤 Session: +${num}\n⏰ ${now}\n❌ ${reason}`;
+        tgNotify(txt).catch(() => {});
       }
 
       // 300ms throttle between sessions
@@ -792,7 +805,6 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       return;
     }
 
-    const NOTIFY_JID = '94726800969@s.whatsapp.net';
     const allSessions = _sm ? _sm.getAllSessions() : [];
     const connected   = allSessions.filter(s => s.status === 'connected');
 
@@ -1064,16 +1076,14 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
       // ── Push per-session result to dashboard instantly ────
       io.emit('react_progress', { num, ok: sessionOk, reason: failReason, emoji: assignedEmoji, emojis: [assignedEmoji] });
 
-      // ── Each session sends its OWN result via its OWN sock ────
-      try {
-        const icon = sessionOk ? '✅' : '❌';
-        const emojiLine = sessionOk ? `\n${assignedEmoji} *Reacted*` : `\n❌ Reason: ${failReason}`;
-        const channelLine = target ? `\n📢 Post: ${target.msgId}` : '';
-        await s.sendMessage(NOTIFY_JID, {
-          text: `${icon} *+${num}*\n${sessionOk ? 'react success' : 'react fail'}${emojiLine}${channelLine}`
-        });
-      } catch (ne) {
-        logger.warn(`[REACT] notify failed for +${num}: ${ne.message}`);
+      // ── Per-session Telegram notify ──────────────────────
+      {
+        const now      = new Date().toLocaleTimeString('en-US', { hour12: false, timeZone: process.env.TIMEZONE || 'Asia/Colombo' });
+        const channelJid = target?.realJid || jid || '';
+        const txt = sessionOk
+          ? `✅ <b>React Success</b>\n👤 Session: +${num}\n${assignedEmoji} Emoji: ${assignedEmoji}\n⏰ ${now}\n📢 Channel: ${channelJid}`
+          : `❌ <b>React Failed</b>\n👤 Session: +${num}\n⏰ ${now}\n❌ ${failReason}`;
+        tgNotify(txt).catch(() => {});
       }
 
       await new Promise(r => setTimeout(r, 200));

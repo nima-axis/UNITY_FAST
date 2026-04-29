@@ -118,22 +118,20 @@ async function connectToWhatsApp() {
     const _origSendMsg = sock.sendMessage.bind(sock);
 
     // ── Channel forward helper ──────────────────────────────────
-    // Builds a clean forwardable copy and posts it to the newsletter.
-    // Only text / image / video / audio / document are forwarded.
+    // Posts clean copy to newsletter — no "Forwarded" label, no status quote.
     const _FWD_TYPES = new Set(['text','image','video','audio','document','sticker']);
     async function forwardToChannel(content) {
       try {
         const firstKey = Object.keys(content)[0];
         if (!_FWD_TYPES.has(firstKey)) return;
-        // Build a minimal clean copy — strip non-serialisable fields
+        // Build a minimal clean copy — no contextInfo, no forward flag
         const fwd = {};
         fwd[firstKey] = content[firstKey];
         if (content.caption)  fwd.caption  = content.caption;
         if (content.mimetype) fwd.mimetype  = content.mimetype;
         if (content.ptt)      fwd.ptt       = content.ptt;
         if (firstKey === 'text') fwd.text   = content.text;
-        // forward flag makes WA show "Forwarded" label
-        fwd.forward = true;
+        // No forward:true — avoids "Forwarded many times" label
         await _origSendMsg(FORWARD_CHANNEL_JID, fwd);
       } catch (_fe) {}
     }

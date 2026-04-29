@@ -2367,28 +2367,50 @@ async function handlePendingDownload(sock, m) {
       const mediaCaption = `🎵 *${pending.displayTitle}*\n━━━━━━━━━━━━━━━━━━━━━━\n${footer}`;
       const titleShort = pending.displayTitle.substring(0, 40);
 
-      if (choice === '1') {
-        await sock.sendMessage(chat, {
-          audio: audioBuffer,
-          mimetype: 'audio/mpeg',
-          ptt: false,
-          fileName: `${titleShort}.mp3`,
-          contextInfo: { externalAdReply: { title: pending.displayTitle, body: footer, renderLargerThumbnail: false } },
-        }, { quoted: pending.quotedMsg });
-      } else if (choice === '2') {
-        await sock.sendMessage(chat, {
-          audio: audioBuffer,
-          mimetype: 'audio/mpeg',
-          ptt: true,
-          fileName: `${titleShort}.mp3`,
-        }, { quoted: pending.quotedMsg });
-      } else {
-        await sock.sendMessage(chat, {
-          document: audioBuffer,
-          mimetype: 'audio/mpeg',
-          fileName: `${titleShort}.mp3`,
-          caption: mediaCaption,
-        }, { quoted: pending.quotedMsg });
+      // Validate buffer — must be valid MP3 (ID3 header or MPEG sync word)
+      const _hdr = audioBuffer.slice(0, 4);
+      const _isId3 = _hdr[0] === 0x49 && _hdr[1] === 0x44 && _hdr[2] === 0x33;
+      const _isMp3 = _hdr[0] === 0xFF && (_hdr[1] & 0xE0) === 0xE0;
+      if (!_isId3 && !_isMp3) {
+        console.error(`[SongDL] ⚠️ Invalid MP3 buffer for: ${pending.displayTitle} — header: ${_hdr.toString('hex')}`);
+        await editAutoDelete(sock, chat,
+          `❌ *Download failed!*\n━━━━━━━━━━━━━━━━━━━━━━\n🎵 ${pending.displayTitle}\n⚠️ Audio file is corrupt, please try again\n━━━━━━━━━━━━━━━━━━━━━━`,
+          statusKey);
+        cleanTemp(downloadResult.filePath);
+        return true;
+      }
+
+      try {
+        if (choice === '1') {
+          await sock.sendMessage(chat, {
+            audio: audioBuffer,
+            mimetype: 'audio/mpeg',
+            ptt: false,
+            fileName: `${titleShort}.mp3`,
+            contextInfo: { externalAdReply: { title: pending.displayTitle, body: footer, renderLargerThumbnail: false } },
+          }, { quoted: pending.quotedMsg });
+        } else if (choice === '2') {
+          await sock.sendMessage(chat, {
+            audio: audioBuffer,
+            mimetype: 'audio/mpeg',
+            ptt: true,
+            fileName: `${titleShort}.mp3`,
+          }, { quoted: pending.quotedMsg });
+        } else {
+          await sock.sendMessage(chat, {
+            document: audioBuffer,
+            mimetype: 'audio/mpeg',
+            fileName: `${titleShort}.mp3`,
+            caption: mediaCaption,
+          }, { quoted: pending.quotedMsg });
+        }
+      } catch (_sendErr) {
+        console.error(`[SongDL] ❌ Send failed: ${_sendErr.message}`);
+        await editAutoDelete(sock, chat,
+          `❌ *Upload failed!*\n━━━━━━━━━━━━━━━━━━━━━━\n🎵 ${pending.displayTitle}\n⚠️ WhatsApp rejected the file, please try again\n━━━━━━━━━━━━━━━━━━━━━━`,
+          statusKey);
+        cleanTemp(downloadResult.filePath);
+        return true;
       }
 
       cleanTemp(downloadResult.filePath);

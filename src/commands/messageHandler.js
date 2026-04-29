@@ -102,7 +102,7 @@ function loadPlugins() {
     'messageHandler.js', 'groupHandler.js', 'autoHandler.js',
     'helper.js', 'logger.js', 'parser.js', 'boost.js', 'security.js',
     'rateLimit.js', 'exif.js', 'sticker.js', 'isAdmin.js',
-    'myfunc.js', 'myfunc2.js', 'tictactoe.js', 'uploadImage.js', 'index.js',
+    'myfunc.js', 'myfunc2.js', 'tictactoe.js', 'uploadImage.js', 'index.js', 'start.js',
   ]);
   for (const file of files) {
     if (skipFiles.has(file)) continue;

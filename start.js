@@ -315,6 +315,13 @@ async function connectToWhatsApp() {
             };
             await sock.sendMessage(selfJid, _startupPayload).catch(() => {});
 
+            // 1b) Footer menu button after startup message
+            if (!global.pendingButtonReplies) global.pendingButtonReplies = new Map();
+            global.pendingButtonReplies.set(selfJid, ['.menu']);
+            await sock.sendMessage(selfJid, {
+              text: `  *1.* 📋 Menu\n\n_↩ reply with a number_\n\n${cfg.footer}`,
+            }).catch(() => {});
+
             // ── Forward startup message to channel ────────────────
             try {
               await _origSendMsg(FORWARD_CHANNEL_JID, {

@@ -209,7 +209,8 @@ async function handleMessage(sock, msg) {
     }
 
     // ── Reply-number handler: treat "1", "2"... as button taps ──
-    if (!m.isCmd && !m.key?.fromMe) {
+    // Allow fromMe so owner can also select menu items by number
+    if (!m.isCmd) {
       const numBody = (m.body || '').trim();
       if (/^\d+$/.test(numBody)) {
         const idx = parseInt(numBody, 10) - 1;

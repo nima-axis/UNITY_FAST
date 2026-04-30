@@ -926,38 +926,166 @@ function start() {
     };
   }
 
-  function msgEditSettings(num, mode, maintenance) {
+  // ── Settings pages — exact match with dashboard NS_FEATS ────
+
+  // Same order & labels as dashboard/public/index.html NS_FEATS
+  const NS_FEATS = [
+    { key: 'autoRecording',   icon: '🎙', label: 'Auto Recording',    desc: 'Auto-record voice notes'                    },
+    { key: 'autoOnline',      icon: '🟢', label: 'Always Online',      desc: 'Always show online'                         },
+    { key: 'autoRead',        icon: '✅', label: 'Auto Read',          desc: 'Mark messages read instantly'               },
+    { key: 'autoTyping',      icon: '⌨️', label: 'Auto Typing',        desc: 'Show typing indicator'                      },
+    { key: 'autoBio',         icon: '📝', label: 'Auto Bio',           desc: 'Rotate bio automatically'                   },
+    { key: 'didYouMean',      icon: '💡', label: 'Did You Mean',       desc: 'Suggest corrections'                        },
+    { key: 'antiCall',        icon: '🚫', label: 'Anti Call',          desc: 'Block incoming calls'                       },
+    { key: 'autoChannelReact',icon: '📢', label: 'Auto Channel React', desc: 'Auto react to every post in a channel'      },
+  ];
+
+  // Same modes as dashboard (public/group/inbox/private)
+  const MODES = ['public', 'group', 'inbox', 'private'];
+  const MODE_LABELS = { public: '🌐 Public', group: '👥 Group', inbox: '📩 Inbox', private: '🔒 Private' };
+
+  function _tf(v) { return v ? '✅' : '❌'; }
+
+  // ── Page: Main settings (matches dashboard layout exactly) ───
+  function msgEditSettings(num, cfg) {
+    const mode  = cfg.mode || 'inbox';
+    const maint = !!cfg.maintenance;
+    const feats = cfg.features || {};
+    const modeLabel = MODE_LABELS[mode] || mode;
+    const featLines = NS_FEATS
+      .map(f => '  ' + _tf(!!feats[f.key]) + ' ' + f.icon + ' ' + f.label)
+      .join('\n');
+    const jid = (feats.autoChannelReactJid || '').trim();
+    const jidLine = feats.autoChannelReact && jid ? '\n  📎 JID: <code>' + jid + '</code>' : '';
     return (
-      '<b>╔═══════════════════╗</b>\n' +
-      '<b>║  ⚙️  BOT SETTINGS  ║</b>\n' +
-      '<b>╚═══════════════════╝</b>\n\n' +
-      '📱 Session: <code>+' + num + '</code>\n\n' +
-      '🌐 Mode:        <b>' + (mode.charAt(0).toUpperCase() + mode.slice(1)) + '</b>\n' +
-      '🔧 Maintenance: <b>' + (maintenance ? '🔴 ON' : '🟢 OFF') + '</b>\n\n' +
-      '<i>Tap a button to toggle:</i>'
+      '<b>╔══════════════════════╗</b>\n' +
+      '<b>║  ⚙️  BOT SETTINGS      ║</b>\n' +
+      '<b>╚══════════════════════╝</b>\n\n' +
+      '📱 <b>+' + num + '</b>\n\n' +
+      '<b>Bot Mode:</b> ' + modeLabel + '\n' +
+      '<b>Maintenance:</b> ' + (maint ? '🔴 ON' : '🟢 OFF') + '\n' +
+      '🔤 Prefix: <code>' + (cfg.prefix || '.') + '</code>   ' +
+      '🗣 Lang: <code>' + (cfg.lang || 'en') + '</code>\n\n' +
+      '<b>Features:</b>\n' + featLines + jidLine + '\n\n' +
+      '<i>Tap a feature to toggle  •  Mode buttons cycle options</i>'
     );
   }
 
-  function kbEditSettings(userId, mode, maintenance) {
-    const modes    = ['public', 'private', 'owner'];
-    const nextMode = modes[(modes.indexOf(mode) + 1) % modes.length];
+  function kbEditSettings(userId, cfg) {
+    const mode  = cfg.mode || 'inbox';
+    const maint = !!cfg.maintenance;
+    const feats = cfg.features || {};
+
+    // Mode row — all 4 options shown, active one highlighted with ✦
+    const modeRow = MODES.map(m => ({
+      text: (m === mode ? '✦ ' : '') + MODE_LABELS[m],
+      callback_data: m === mode ? 'noop' : 'edit_setmode:' + userId + ':' + m,
+    }));
+
+    // Maintenance toggle
+    const maintRow = [{
+      text: maint ? '🔧 Maintenance: 🔴 ON  → turn OFF' : '🔧 Maintenance: 🟢 OFF → turn ON',
+      callback_data: 'edit_setmaint:' + userId + ':' + (maint ? '0' : '1'),
+    }];
+
+    // Feature toggle rows (2 per row)
+    const featRows = [];
+    for (let i = 0; i < NS_FEATS.length; i += 2) {
+      const row = [];
+      for (let j = i; j < Math.min(i + 2, NS_FEATS.length); j++) {
+        const f  = NS_FEATS[j];
+        const on = !!feats[f.key];
+        row.push({
+          text: _tf(on) + ' ' + f.icon + ' ' + f.label,
+          callback_data: 'edit_feat:' + userId + ':' + f.key + ':' + (on ? '0' : '1'),
+        });
+      }
+      featRows.push(row);
+    }
+
+    // If autoChannelReact is ON, add JID input button
+    const extraRows = [];
+    if (feats.autoChannelReact) {
+      const jid = (feats.autoChannelReactJid || '').trim();
+      extraRows.push([{
+        text: '📎 Set Channel JID: ' + (jid ? jid.slice(0, 20) + '…' : '(not set)'),
+        callback_data: 'edit_channeliid:' + userId,
+      }]);
+    }
+
     return {
       inline_keyboard: [
-        [{
-          text: '🌐 Mode: ' + mode + '  →  ' + nextMode,
-          callback_data: 'edit_setmode:' + userId + ':' + nextMode,
-        }],
-        [
-          maintenance
-            ? { text: '🔧 Maintenance: ON  → turn OFF', callback_data: 'edit_setmaint:' + userId + ':0' }
-            : { text: '🔧 Maintenance: OFF → turn ON',  callback_data: 'edit_setmaint:' + userId + ':1' },
-        ],
+        modeRow,
+        maintRow,
+        ...featRows,
+        ...extraRows,
+        [{ text: '📋 Command Toggles →', callback_data: 'edit_cmds:' + userId + ':0' }],
         [
           { text: '◀️ Back',  callback_data: 'edit_sess:' + userId },
           { text: '🏠 Home',  callback_data: 'home' },
         ],
       ],
     };
+  }
+
+  // ── Page: Command category list (paginated) ──────────────────
+  const CMD_GROUPS_KEYS = [
+    'AI & Search', 'Media Tools', 'Downloads', 'Text Tools', 'Fun',
+    'Anime', 'Text Art', 'Image Effects', 'Games', 'Group Mgmt',
+    'Protection', 'Auto Systems', 'Sri Lanka', 'Info & Stats',
+  ];
+
+  function msgEditCmds(num, page, groupName, groupCmds, enabledMap) {
+    const enabled = groupCmds.filter(c => {
+      const v = enabledMap.get(c);
+      return v === undefined ? true : !!v;
+    });
+    return (
+      '<b>╔══════════════════════╗</b>\n' +
+      '<b>║  📋  CMD TOGGLES      ║</b>\n' +
+      '<b>╚══════════════════════╝</b>\n\n' +
+      '📱 <b>+' + num + '</b>\n\n' +
+      '<b>' + groupName + '</b>  (' + enabled.length + '/' + groupCmds.length + ' enabled)\n\n' +
+      groupCmds.map(c => {
+        const v = enabledMap.get(c);
+        const on = v === undefined ? true : !!v;
+        return _tf(on) + ' <code>' + c + '</code>';
+      }).join('  ') +
+      '\n\n<i>Tap a command to toggle, or use All ON/OFF.</i>'
+    );
+  }
+
+  function kbEditCmds(userId, page, groupName, groupCmds, enabledMap) {
+    const rows = [];
+    // Individual command toggles (3 per row)
+    for (let i = 0; i < groupCmds.length; i += 3) {
+      const row = [];
+      for (let j = i; j < Math.min(i + 3, groupCmds.length); j++) {
+        const c  = groupCmds[j];
+        const v  = enabledMap.get(c);
+        const on = v === undefined ? true : !!v;
+        row.push({
+          text: _tf(on) + ' ' + c,
+          callback_data: 'edit_cmd:' + userId + ':' + c + ':' + (on ? '0' : '1') + ':' + page,
+        });
+      }
+      rows.push(row);
+    }
+    // All ON / All OFF
+    rows.push([
+      { text: '✅ All ON',  callback_data: 'edit_cmdall:' + userId + ':' + groupName + ':1:' + page },
+      { text: '❌ All OFF', callback_data: 'edit_cmdall:' + userId + ':' + groupName + ':0:' + page },
+    ]);
+    // Pagination
+    const navRow = [];
+    if (page > 0)                          navRow.push({ text: '◀️', callback_data: 'edit_cmds:' + userId + ':' + (page - 1) });
+    if (page < CMD_GROUPS_KEYS.length - 1) navRow.push({ text: '▶️', callback_data: 'edit_cmds:' + userId + ':' + (page + 1) });
+    if (navRow.length) rows.push(navRow);
+    rows.push([
+      { text: '⚙️ Back to Settings', callback_data: 'edit_settings:' + userId },
+      { text: '🏠 Home',            callback_data: 'home' },
+    ]);
+    return { inline_keyboard: rows };
   }
 
   // ── Helper: send/edit session list ───────────────────────────
@@ -1010,6 +1138,43 @@ function start() {
       }
       editState.set(chatId, { stage: 'pick_session' });
       await _sendEditSessions(chatId, null);
+      return;
+    }
+
+    if (state.stage === 'await_channel_jid') {
+      const userId = state.userId;
+      editState.delete(chatId);
+      const input = msg.text.trim();
+      if (input.toLowerCase() === 'cancel') {
+        await bot.sendMessage(chatId, '↩️ Cancelled.', { parse_mode: 'HTML' });
+        return;
+      }
+      // Accept full link or raw JID
+      let jid = input;
+      const m = input.match(/whatsapp\.com\/channel\/([A-Za-z0-9_-]+)/i);
+      if (m) jid = 'https://whatsapp.com/channel/' + m[1];
+      try {
+        const cfg = await db.getBotConfig(userId);
+        if (!cfg.features) cfg.features = {};
+        cfg.features.autoChannelReactJid = jid;
+        cfg.markModified('features');
+        await cfg.save();
+        const sm      = global.unitySessionManager;
+        const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+        const num     = sessInfo ? (sessInfo.number || userId) : userId;
+        await bot.sendMessage(chatId,
+          '✅ <b>Channel JID saved</b>\n\n<code>' + jid + '</code>',
+          { parse_mode: 'HTML' }
+        );
+        // Re-send settings
+        await bot.sendMessage(chatId, msgEditSettings(num, cfg), {
+          parse_mode: 'HTML',
+          reply_markup: kbEditSettings(userId, cfg),
+        });
+      } catch (e) {
+        await bot.sendMessage(chatId, '❌ Failed: ' + e.message, { parse_mode: 'HTML' });
+      }
+      return;
     }
   });
 
@@ -1178,18 +1343,143 @@ function start() {
       const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
       const num      = sessInfo ? (sessInfo.number || userId) : userId;
       try {
-        const cfg   = await db.getBotConfig(userId);
-        const mode  = cfg.mode || 'public';
-        const maint = !!cfg.maintenance;
-        await bot.editMessageText(msgEditSettings(num, mode, maint), {
+        const cfg = await db.getBotConfig(userId);
+        await bot.editMessageText(msgEditSettings(num, cfg), {
           chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
-          reply_markup: kbEditSettings(userId, mode, maint),
+          reply_markup: kbEditSettings(userId, cfg),
         }).catch(() => {});
       } catch (e) {
         await bot.editMessageText('❌ <b>Failed to load settings:</b>\n' + e.message, {
           chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
           reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'edit_sess:' + userId }]] },
         }).catch(() => {});
+      }
+      return;
+    }
+
+    // ── Settings: toggle individual feature ──────────────────
+    if (data.startsWith('edit_feat:')) {
+      // edit_feat:userId:featureKey:0or1
+      const parts   = data.slice('edit_feat:'.length).split(':');
+      const userId  = parts[0];
+      const featKey = parts[1];
+      const newVal  = parts[2] === '1';
+      const sm      = global.unitySessionManager;
+      const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const num     = sessInfo ? (sessInfo.number || userId) : userId;
+      try {
+        const cfg = await db.getBotConfig(userId);
+        if (!cfg.features) cfg.features = {};
+        cfg.features[featKey] = newVal;
+        cfg.markModified('features');
+        await cfg.save();
+        await bot.editMessageText(msgEditSettings(num, cfg), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditSettings(userId, cfg),
+        }).catch(() => {});
+        // If autoChannelReact just turned ON and no JID set, prompt for it
+        if (featKey === 'autoChannelReact' && newVal && !(cfg.features.autoChannelReactJid || '').trim()) {
+          editState.set(chatId, { stage: 'await_channel_jid', userId });
+          await bot.sendMessage(chatId,
+            '📎 <b>Set the channel link/JID for Auto Channel React:</b>\n\n' +
+            '<code>https://whatsapp.com/channel/...</code>\nor <code>120363xxx@newsletter</code>\n\n' +
+            'Type <code>cancel</code> to skip.',
+            { parse_mode: 'HTML' }
+          );
+        }
+      } catch (e) {
+        logger.warn('[TG-MGMT] feat toggle failed: ' + e.message);
+      }
+      return;
+    }
+
+    // ── Command toggles: show category page ──────────────────
+    if (data.startsWith('edit_cmds:')) {
+      const parts  = data.slice('edit_cmds:'.length).split(':');
+      const userId = parts[0];
+      const page   = parseInt(parts[1]) || 0;
+      const sm     = global.unitySessionManager;
+      const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const num    = sessInfo ? (sessInfo.number || userId) : userId;
+      try {
+        const { CMD_GROUPS } = require('../commands/settings');
+        const cfg         = await db.getBotConfig(userId);
+        const enabledMap  = cfg.enabledCommands || new Map();
+        const groupName   = CMD_GROUPS_KEYS[page];
+        const groupCmds   = (CMD_GROUPS[groupName] || []);
+        await bot.editMessageText(msgEditCmds(num, page, groupName, groupCmds, enabledMap), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditCmds(userId, page, groupName, groupCmds, enabledMap),
+        }).catch(() => {});
+      } catch (e) {
+        logger.warn('[TG-MGMT] edit_cmds failed: ' + e.message);
+      }
+      return;
+    }
+
+    // ── Command toggles: toggle single command ────────────────
+    if (data.startsWith('edit_cmd:') && !data.startsWith('edit_cmdall:') && !data.startsWith('edit_cmds:')) {
+      // edit_cmd:userId:cmdName:0or1:page
+      const parts   = data.slice('edit_cmd:'.length).split(':');
+      const userId  = parts[0];
+      const cmdName = parts[1];
+      const newVal  = parts[2] === '1';
+      const page    = parseInt(parts[3]) || 0;
+      const sm      = global.unitySessionManager;
+      const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const num     = sessInfo ? (sessInfo.number || userId) : userId;
+      try {
+        const { CMD_GROUPS } = require('../commands/settings');
+        const cfg = await db.getBotConfig(userId);
+        if (!cfg.enabledCommands) cfg.enabledCommands = new Map();
+        cfg.enabledCommands.set(cmdName, newVal);
+        cfg.markModified('enabledCommands');
+        await cfg.save();
+        const enabledMap = cfg.enabledCommands;
+        const groupName  = CMD_GROUPS_KEYS[page];
+        const groupCmds  = (CMD_GROUPS[groupName] || []);
+        await bot.editMessageText(msgEditCmds(num, page, groupName, groupCmds, enabledMap), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditCmds(userId, page, groupName, groupCmds, enabledMap),
+        }).catch(() => {});
+      } catch (e) {
+        logger.warn('[TG-MGMT] cmd toggle failed: ' + e.message);
+      }
+      return;
+    }
+
+    // ── Command toggles: all ON or all OFF for a category ────
+    if (data.startsWith('edit_cmdall:')) {
+      // edit_cmdall:userId:groupName:0or1:page
+      const raw      = data.slice('edit_cmdall:'.length);
+      // groupName may contain spaces — split from end
+      const lastColon2 = raw.lastIndexOf(':');
+      const page       = parseInt(raw.slice(lastColon2 + 1)) || 0;
+      const tmp        = raw.slice(0, lastColon2);
+      const lastColon1 = tmp.lastIndexOf(':');
+      const newVal     = tmp.slice(lastColon1 + 1) === '1';
+      const tmp2       = tmp.slice(0, lastColon1);
+      const firstColon = tmp2.indexOf(':');
+      const userId     = tmp2.slice(0, firstColon);
+      const groupName  = tmp2.slice(firstColon + 1);
+      const sm         = global.unitySessionManager;
+      const sessInfo   = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const num        = sessInfo ? (sessInfo.number || userId) : userId;
+      try {
+        const { CMD_GROUPS } = require('../commands/settings');
+        const cfg       = await db.getBotConfig(userId);
+        if (!cfg.enabledCommands) cfg.enabledCommands = new Map();
+        const groupCmds = CMD_GROUPS[groupName] || [];
+        for (const c of groupCmds) cfg.enabledCommands.set(c, newVal);
+        cfg.markModified('enabledCommands');
+        await cfg.save();
+        const enabledMap = cfg.enabledCommands;
+        await bot.editMessageText(msgEditCmds(num, page, groupName, groupCmds, enabledMap), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditCmds(userId, page, groupName, groupCmds, enabledMap),
+        }).catch(() => {});
+      } catch (e) {
+        logger.warn('[TG-MGMT] cmdall failed: ' + e.message);
       }
       return;
     }
@@ -1206,10 +1496,9 @@ function start() {
         const cfg = await db.getBotConfig(userId);
         cfg.mode  = newMode;
         await cfg.save();
-        const maint = !!cfg.maintenance;
-        await bot.editMessageText(msgEditSettings(num, newMode, maint), {
+        await bot.editMessageText(msgEditSettings(num, cfg), {
           chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
-          reply_markup: kbEditSettings(userId, newMode, maint),
+          reply_markup: kbEditSettings(userId, cfg),
         }).catch(() => {});
       } catch (e) {
         logger.warn('[TG-MGMT] setmode failed: ' + e.message);
@@ -1226,17 +1515,35 @@ function start() {
       const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
       const num      = sessInfo ? (sessInfo.number || userId) : userId;
       try {
-        const cfg         = await db.getBotConfig(userId);
-        cfg.maintenance   = newMaint;
+        const cfg       = await db.getBotConfig(userId);
+        cfg.maintenance = newMaint;
         await cfg.save();
-        const mode = cfg.mode || 'public';
-        await bot.editMessageText(msgEditSettings(num, mode, newMaint), {
+        await bot.editMessageText(msgEditSettings(num, cfg), {
           chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
-          reply_markup: kbEditSettings(userId, mode, newMaint),
+          reply_markup: kbEditSettings(userId, cfg),
         }).catch(() => {});
       } catch (e) {
         logger.warn('[TG-MGMT] setmaint failed: ' + e.message);
       }
+      return;
+    }
+
+    // ── noop (tapping active mode button) ────────────────────
+    if (data === 'noop') { return; }
+
+    // ── autoChannelReact JID input ────────────────────────────
+    if (data.startsWith('edit_channeliid:')) {
+      const userId = data.slice('edit_channeliid:'.length);
+      editState.set(chatId, { stage: 'await_channel_jid', userId });
+      await bot.sendMessage(chatId,
+        '📎 <b>Set Auto Channel React JID</b>\n\n' +
+        'Send the channel link or JID:\n' +
+        '<code>https://whatsapp.com/channel/...</code>\n' +
+        'or\n' +
+        '<code>120363xxx@newsletter</code>\n\n' +
+        'Type <code>cancel</code> to abort.',
+        { parse_mode: 'HTML' }
+      );
       return;
     }
   });

@@ -10,7 +10,7 @@
  *   /pair <number>       — Pair a WhatsApp number
  *   /ping                — Latency check
  *   /runtime             — Uptime & memory
- *   /sessions            — Connected WA sessions
+ *   /sessions / /which   — Connected WA sessions
  *   /send <number> <msg> — Send WA message via session
  *   /yt   <url>          — YouTube MP4 download
  *   /mp3  <url>          — YouTube MP3 download
@@ -24,7 +24,9 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios       = require('axios');
 const fs          = require('fs');
 const path        = require('path');
-const logger      = require('./logger');
+// ✅ Fixed: correct path from src/telegram/ to src/commands/logger
+const logger      = require('../commands/logger');
+const db          = require('../commands/index');
 
 let bot = null;
 
@@ -62,19 +64,22 @@ function cleanTemp(file) {
 }
 
 // ── Session manager accessor ──────────────────────────────────
-async function getSM(ms = 15000) {
+async function getSM(ms = 30000) {
   let sm = global.unitySessionManager;
   const end = Date.now() + ms;
-  while (!sm && Date.now() < end) { await wait(1000); sm = global.unitySessionManager; }
+  while (!sm && Date.now() < end) {
+    await wait(1000);
+    sm = global.unitySessionManager;
+  }
   return sm || null;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SECTION 1 — PAIR (from pairBot.js)
+// SECTION 1 — PAIR (ported from pairBot.js)
 // ═══════════════════════════════════════════════════════════════
 const _inProgress = new Set();
 
-async function waitForPairCode(sess, timeoutMs = 65000) {
+async function waitForPairCode(sess, timeoutMs = 60000) {
   let elapsed = 0;
   while (elapsed < timeoutMs) {
     if (sess.pairCode)               return { result: 'code', pairCode: sess.pairCode };
@@ -87,54 +92,88 @@ async function waitForPairCode(sess, timeoutMs = 65000) {
 }
 
 async function doPair(chatId, number, editMsgId = null) {
-  const send = (text, kb) => {
-    const opts = { parse_mode: 'HTML', ...(kb ? { reply_markup: kb } : {}) };
-    return editMsgId
-      ? bot.editMessageText(text, { chat_id: chatId, message_id: editMsgId, ...opts }).catch(() => {})
-      : bot.sendMessage(chatId, text, opts);
-  };
-
+  // Already in progress?
   if (_inProgress.has(number)) {
-    return send(
-      '⏳ <b>Already Processing...</b>\n\n' +
-      'A pairing request for <code>+' + number + '</code>\n' +
-      'is currently in progress. Please wait.'
-    );
+    const txt  = '<b>⏳ Already Processing...</b>\n\nA pairing request for <code>+' + number + '</code>\nis currently in progress.\n\nPlease wait for it to complete.';
+    const opts = { parse_mode: 'HTML' };
+    return editMsgId
+      ? bot.editMessageText(txt, { chat_id: chatId, message_id: editMsgId, ...opts }).catch(() => {})
+      : bot.sendMessage(chatId, txt, opts);
   }
 
+  // Get session manager
   let sm = global.unitySessionManager;
-  if (!sm) { try { sm = require('../sessionManager'); global.unitySessionManager = sm; } catch (_) {} }
-  if (!sm) return send('❌ <b>Session manager not ready.</b>\nTry again in a moment.');
+  if (!sm) {
+    try { sm = require('../sessionManager'); global.unitySessionManager = sm; } catch (_e) {}
+  }
+  if (!sm) {
+    const txt  = '❌ <b>Session manager not ready.</b>\nPlease try again in a moment.';
+    const opts = { parse_mode: 'HTML' };
+    return editMsgId
+      ? bot.editMessageText(txt, { chat_id: chatId, message_id: editMsgId, ...opts }).catch(() => {})
+      : bot.sendMessage(chatId, txt, opts);
+  }
 
+  // Already connected?
   const existing = sm.getSession(number);
-  if (existing?.status === 'connected') return send(msgAlreadyLinked(number), KB_BACK);
+  if (existing?.status === 'connected') {
+    const opts = { parse_mode: 'HTML', reply_markup: KB_BACK };
+    return editMsgId
+      ? bot.editMessageText(msgAlreadyLinked(number), { chat_id: chatId, message_id: editMsgId, ...opts }).catch(() => {})
+      : bot.sendMessage(chatId, msgAlreadyLinked(number), opts);
+  }
 
   _inProgress.add(number);
 
+  // Show generating message
   let sentMsg;
   if (editMsgId) {
-    await bot.editMessageText(msgGenerating(number), { chat_id: chatId, message_id: editMsgId, parse_mode: 'HTML' }).catch(() => {});
+    await bot.editMessageText(msgGenerating(number), {
+      chat_id: chatId, message_id: editMsgId, parse_mode: 'HTML',
+    }).catch(() => {});
     sentMsg = { message_id: editMsgId };
   } else {
     sentMsg = await bot.sendMessage(chatId, msgGenerating(number), { parse_mode: 'HTML' });
   }
 
   const upd = (text, kb) => bot.editMessageText(text, {
-    chat_id: chatId, message_id: sentMsg.message_id,
-    parse_mode: 'HTML', ...(kb ? { reply_markup: kb } : {}),
+    chat_id: chatId,
+    message_id: sentMsg.message_id,
+    parse_mode: 'HTML',
+    ...(kb ? { reply_markup: kb } : {}),
   }).catch(() => {});
 
   try {
     const sess    = await sm.startSession(number, () => {});
     const outcome = await waitForPairCode(sess);
 
-    if (outcome.result === 'connected') return upd(msgAlreadyLinked(number), KB_BACK);
-    if (outcome.result === 'code')      return upd(msgCodeReady(number, outcome.pairCode), KB_BACK);
-    if (outcome.result === 'timeout')   return upd(msgTimeout(number), kbRetry(number));
-    return upd(msgPairError(number, 'Session error'), kbRetry(number));
+    if (outcome.result === 'connected') {
+      await upd(msgAlreadyLinked(number), KB_BACK);
+      return;
+    }
+
+    if (outcome.result === 'code') {
+      // ✅ Same as original pairBot.js — mark as paired in DB
+      const userJid = number + '@s.whatsapp.net';
+      await db.setPaired(userJid, true).catch(() => {});
+      try {
+        const { autoFollowChannels } = require('./autoHandler');
+        await autoFollowChannels(userJid);
+      } catch (_e) {}
+      await upd(msgCodeReady(number, outcome.pairCode), KB_BACK);
+      return;
+    }
+
+    if (outcome.result === 'timeout') {
+      await upd(msgTimeout(number), kbRetry(number));
+      return;
+    }
+
+    await upd(msgPairError('Session error'), kbRetry(number));
+
   } catch (e) {
-    logger.error('[TG-SUPER] pair error +' + number + ': ' + e.message);
-    return upd(msgPairError(number, e.message), kbRetry(number));
+    logger.error('[TG-SUPER] startSession error for ' + number + ': ' + e.message);
+    await upd(msgPairError(e.message), kbRetry(number));
   } finally {
     _inProgress.delete(number);
   }
@@ -236,7 +275,7 @@ async function ytMp4(url) {
           if (d?.url) return { url: d.url, title: 'YouTube Video', quality: '720p' };
         } catch (_) {}
       }
-      throw new Error('cobalt failed');
+      throw new Error('cobalt all failed');
     },
   ];
   for (const fn of tries) { try { const r = await fn(); if (r) return r; } catch (_) {} }
@@ -272,7 +311,7 @@ async function tiktokDl(url) {
           if (d?.url) return { url: d.url, audio: d.url, title: 'TikTok Video', author: '' };
         } catch (_) {}
       }
-      throw new Error('cobalt failed');
+      throw new Error('cobalt all failed');
     },
   ];
   for (const fn of tries) { try { const r = await fn(); if (r) return r; } catch (_) {} }
@@ -302,7 +341,7 @@ async function igDl(url) {
           if (d?.url) return { url: d.url, type: 'video' };
         } catch (_) {}
       }
-      throw new Error('cobalt failed');
+      throw new Error('cobalt all failed');
     },
   ];
   for (const fn of tries) { try { const r = await fn(); if (r) return r; } catch (_) {} }
@@ -331,14 +370,14 @@ async function fbDl(url) {
           if (d?.url) return { url: d.url };
         } catch (_) {}
       }
-      throw new Error('cobalt failed');
+      throw new Error('cobalt all failed');
     },
   ];
   for (const fn of tries) { try { const r = await fn(); if (r) return r; } catch (_) {} }
   throw new Error('All Facebook methods failed');
 }
 
-// ── Send media to Telegram (URL first, then download+upload) ──
+// ── Send media to Telegram ────────────────────────────────────
 const TG_MAX = 48 * 1024 * 1024;
 
 async function streamToFile(url, dest) {
@@ -352,12 +391,14 @@ async function streamToFile(url, dest) {
 }
 
 async function sendMedia(chatId, mediaUrl, type, caption) {
+  // Try direct URL send first
   try {
     if (type === 'audio') await bot.sendAudio(chatId, mediaUrl, { caption, parse_mode: 'HTML' });
     else                  await bot.sendVideo(chatId, mediaUrl, { caption, parse_mode: 'HTML', supports_streaming: true });
     return { ok: true };
   } catch (_) {}
 
+  // Download then upload
   const ext  = type === 'audio' ? '.mp3' : '.mp4';
   const dest = path.join(TEMP_DIR, 'tg_' + Date.now() + ext);
   try {
@@ -423,6 +464,7 @@ async function handleDownload(chatId, url, platform, format) {
       const r = await sendMedia(chatId, d.url, 'video', cap);
       if (!r.ok) await bot.sendMessage(chatId, cap + '\n\n🔗 <a href="' + d.url + '">Download Link</a>', { parse_mode: 'HTML' });
     }
+
   } catch (e) {
     logger.error('[TG-SUPER] dl error: ' + e.message);
     await upd('❌ <b>Download Failed</b>\n<code>' + e.message.slice(0, 200) + '</code>').catch(() => {});
@@ -526,7 +568,7 @@ function msgGenerating(num) {
     '<b>║  ⏳  GENERATING CODE  ║</b>\n' +
     '<b>╚══════════════════╝</b>\n\n' +
     '📞 Number: <code>+' + num + '</code>\n\n' +
-    '🔄 <b>Creating pairing code...</b>\n' +
+    '🔄 <b>Creating your pairing code...</b>\n' +
     '<i>This may take a few seconds.</i>\n\n' +
     '━━━━━━━━━━━━━━━━━━━━━\n' +
     '⏱ Please wait, do not close this chat.'
@@ -542,13 +584,14 @@ function msgCodeReady(num, code) {
     '🔑 Your Code:\n\n' +
     '<code>' + code + '</code>\n\n' +
     '━━━━━━━━━━━━━━━━━━━━━\n' +
-    '<b>📲 Enter this in WhatsApp:</b>\n\n' +
+    '<b>📲 Enter this code in WhatsApp:</b>\n\n' +
     '   1️⃣ Open <b>WhatsApp</b>\n' +
-    '   2️⃣ <b>Settings</b> ⚙️ → <b>Linked Devices</b>\n' +
-    '   3️⃣ <b>Link a Device</b> → Enter code above 👆\n\n' +
+    '   2️⃣ Tap <b>Settings</b> ⚙️\n' +
+    '   3️⃣ <b>Linked Devices</b> → <b>Link a Device</b>\n' +
+    '   4️⃣ Enter the code above 👆\n\n' +
     '━━━━━━━━━━━━━━━━━━━━━\n' +
     '⏱ <b>Expires in 60 seconds!</b>\n' +
-    '<i>Tap the code to copy it.</i>'
+    '<i>Tap the code above to copy it.</i>'
   );
 }
 
@@ -558,9 +601,9 @@ function msgAlreadyLinked(num) {
     '<b>║  🎉  ALREADY LINKED!  ║</b>\n' +
     '<b>╚══════════════════╝</b>\n\n' +
     '✅ <code>+' + num + '</code> is already connected!\n\n' +
-    'Your WhatsApp is linked and active.\n\n' +
+    'Your WhatsApp is linked and ready.\n\n' +
     '━━━━━━━━━━━━━━━━━━━━━\n' +
-    '💬 FAST-BOT is ready to use!'
+    '💬 Go chat — FAST-BOT is active!'
   );
 }
 
@@ -569,7 +612,7 @@ function msgTimeout(num) {
     '<b>╔══════════════════╗</b>\n' +
     '<b>║  ⏰  CODE EXPIRED!   ║</b>\n' +
     '<b>╚══════════════════╝</b>\n\n' +
-    '❌ Pairing code for <code>+' + num + '</code>\n' +
+    '❌ The pairing code for <code>+' + num + '</code>\n' +
     '   expired before being entered.\n\n' +
     '━━━━━━━━━━━━━━━━━━━━━\n' +
     '💡 Tap <b>Try Again</b> to get a new code.\n' +
@@ -577,19 +620,19 @@ function msgTimeout(num) {
   );
 }
 
-function msgPairError(num, err) {
+function msgPairError(err) {
   return (
     '<b>╔══════════════════╗</b>\n' +
     '<b>║   ❌  PAIRING FAILED  ║</b>\n' +
     '<b>╚══════════════════╝</b>\n\n' +
-    '📞 Number: <code>+' + num + '</code>\n' +
+    'Something went wrong during pairing.\n\n' +
     '<b>Reason:</b> <code>' + (err || 'Unknown error') + '</code>\n\n' +
     '━━━━━━━━━━━━━━━━━━━━━\n' +
     '<b>Check:</b>\n' +
     '   ◉ Number includes country code\n' +
     '   ◉ Number has active WhatsApp\n' +
     '   ◉ Number is not already linked\n\n' +
-    '💡 Tap <b>Try Again</b> below.'
+    '💡 Tap <b>Try Again</b> or wait 60s.'
   );
 }
 
@@ -600,7 +643,7 @@ function msgPing(lat) {
     '<b>║    🏓  PONG!         ║</b>\n' +
     '<b>╚═══════════════════╝</b>\n\n' +
     '⚡ Latency: <code>' + lat + 'ms</code>\n\n' +
-    q + ' — ' + (lat < 200 ? 'Bot is flying!' : lat < 500 ? 'Running smoothly.' : 'Check your network.')
+    q + ' — ' + (lat < 200 ? 'bot is flying!' : lat < 500 ? 'running smoothly.' : 'check your network.')
   );
 }
 
@@ -612,10 +655,10 @@ function msgRuntime() {
     '<b>╔═══════════════════╗</b>\n' +
     '<b>║  ⏱  BOT RUNTIME     ║</b>\n' +
     '<b>╚═══════════════════╝</b>\n\n' +
-    '🕐 Uptime: <code>' + up + '</code>\n' +
-    '💾 RAM:    <code>' + mem + ' MB</code>\n' +
-    '📦 Heap:   <code>' + heap + ' MB</code>\n' +
-    '🟢 Node:   <code>' + process.version + '</code>\n\n' +
+    '🕐 Uptime:  <code>' + up + '</code>\n' +
+    '💾 RAM:     <code>' + mem + ' MB</code>\n' +
+    '📦 Heap:    <code>' + heap + ' MB</code>\n' +
+    '🟢 Node.js: <code>' + process.version + '</code>\n\n' +
     '━━━━━━━━━━━━━━━━━━━━━\n' +
     '<i>FAST-BOT is running strong 💪</i>'
   );
@@ -689,7 +732,7 @@ function start() {
 
   // /start
   bot.onText(/^\/start(@\S+)?$/, (msg) => {
-    const name = msg.from?.first_name || 'there';
+    const name = msg.from && msg.from.first_name ? msg.from.first_name : 'there';
     bot.sendMessage(msg.chat.id, msgMain(name), { parse_mode: 'HTML', reply_markup: KB_MAIN });
   });
 
@@ -700,13 +743,14 @@ function start() {
 
   // ── PAIR ────────────────────────────────────────────────────
   bot.onText(/^\/pair(?:@\S+)?\s+(.+)$/, async (msg, match) => {
-    const num = (match[1] || '').replace(/\D/g, '');
+    const num = (match[1] || '').replace(/[^0-9]/g, '');
     if (num.length < 7) return bot.sendMessage(msg.chat.id, msgPairHelp(), { parse_mode: 'HTML', reply_markup: KB_BACK });
     await doPair(msg.chat.id, num);
   });
 
   bot.onText(/^\/pair(@\S+)?$/, (msg) => {
-    bot.sendMessage(msg.chat.id, msgPairHome(msg.from?.first_name || 'there'), { parse_mode: 'HTML', reply_markup: KB_PAIR_HOME });
+    const name = msg.from && msg.from.first_name ? msg.from.first_name : 'there';
+    bot.sendMessage(msg.chat.id, msgPairHome(name), { parse_mode: 'HTML', reply_markup: KB_PAIR_HOME });
   });
 
   // ── MANAGEMENT (admin only) ──────────────────────────────────
@@ -714,7 +758,9 @@ function start() {
     if (!isAdmin(msg.from)) return;
     const t    = Date.now();
     const sent = await bot.sendMessage(msg.chat.id, '🏓 <i>Pinging...</i>', { parse_mode: 'HTML' });
-    bot.editMessageText(msgPing(Date.now() - t), { chat_id: msg.chat.id, message_id: sent.message_id, parse_mode: 'HTML', reply_markup: KB_BACK });
+    bot.editMessageText(msgPing(Date.now() - t), {
+      chat_id: msg.chat.id, message_id: sent.message_id, parse_mode: 'HTML', reply_markup: KB_BACK,
+    });
   });
 
   bot.onText(/^\/runtime(@\S+)?$/, (msg) => {
@@ -724,8 +770,8 @@ function start() {
 
   bot.onText(/^\/(sessions|which)(@\S+)?$/, async (msg) => {
     if (!isAdmin(msg.from)) return;
-    const sm = await getSM(10000);
-    if (!sm) return bot.sendMessage(msg.chat.id, '❌ Session manager not ready.', { parse_mode: 'HTML' });
+    const sm = await getSM(30000);
+    if (!sm) return bot.sendMessage(msg.chat.id, '❌ Session manager not ready. Try again in a moment.', { parse_mode: 'HTML' });
     const all   = sm.getAllSessions();
     const conn  = all.filter(s => s.status === 'connected');
     const pair  = all.filter(s => s.status === 'pairing');
@@ -767,7 +813,7 @@ function start() {
     bot.sendMessage(msg.chat.id, msgSendHelp(), { parse_mode: 'HTML', reply_markup: KB_BACK });
   });
 
-  // ── DOWNLOADS (available to everyone) ───────────────────────
+  // ── DOWNLOADS ────────────────────────────────────────────────
   bot.onText(/^\/yt(?:@\S+)?\s+(https?:\/\/\S+)$/, async (msg, match) => {
     await handleDownload(msg.chat.id, match[1].trim(), 'youtube', 'mp4');
   });
@@ -820,8 +866,8 @@ function start() {
 
   // ── INLINE BUTTONS ───────────────────────────────────────────
   bot.on('callback_query', async (cb) => {
-    const chatId = cb.message?.chat?.id;
-    const msgId  = cb.message?.message_id;
+    const chatId = cb.message && cb.message.chat && cb.message.chat.id;
+    const msgId  = cb.message && cb.message.message_id;
     const data   = cb.data || '';
     await bot.answerCallbackQuery(cb.id).catch(() => {});
 
@@ -832,14 +878,21 @@ function start() {
       reply_markup: kb || KB_BACK,
     }).catch(() => {});
 
-    if (data === 'home') return edit(msgMain(cb.from?.first_name || 'there'), KB_MAIN);
+    // ── Public buttons ─────────────────────────────────────────
+    if (data === 'home') {
+      const name = cb.from && cb.from.first_name ? cb.from.first_name : 'there';
+      return edit(msgMain(name), KB_MAIN);
+    }
+    if (data === 'pair_home') {
+      const name = cb.from && cb.from.first_name ? cb.from.first_name : 'there';
+      return edit(msgPairHome(name), KB_PAIR_HOME);
+    }
+    if (data === 'pair_help')        return edit(msgPairHelp());
+    if (data.startsWith('retry_'))   return doPair(chatId, data.replace('retry_', ''), msgId);
+    if (data === 'help_dl')          return edit(msgDlHelp());
+    if (data === 'help_send')        return edit(msgSendHelp());
 
-    // Pair buttons (everyone)
-    if (data === 'pair_home') return edit(msgPairHome(cb.from?.first_name || 'there'), KB_PAIR_HOME);
-    if (data === 'pair_help') return edit(msgPairHelp());
-    if (data.startsWith('retry_')) return doPair(chatId, data.replace('retry_', ''), msgId);
-
-    // Management buttons (admin only)
+    // ── Admin-only buttons ─────────────────────────────────────
     if (!isAdmin(cb.from)) return;
 
     if (data === 'cmd_ping') {
@@ -847,10 +900,10 @@ function start() {
       await edit('🏓 <i>Pinging...</i>');
       return edit(msgPing(Date.now() - t));
     }
-    if (data === 'cmd_runtime')  return edit(msgRuntime());
+    if (data === 'cmd_runtime') return edit(msgRuntime());
     if (data === 'cmd_sessions') {
       const sm = await getSM(8000);
-      if (!sm) return edit('❌ Session manager not ready.');
+      if (!sm) return edit('❌ Session manager not ready. Try again in a moment.');
       const all   = sm.getAllSessions();
       const conn  = all.filter(s => s.status === 'connected');
       const pair  = all.filter(s => s.status === 'pairing');
@@ -860,8 +913,6 @@ function start() {
         : '<i>None connected</i>';
       return edit(msgSessions(all.length, conn.length, pair.length, other.length, lines));
     }
-    if (data === 'help_dl')   return edit(msgDlHelp());
-    if (data === 'help_send') return edit(msgSendHelp());
   });
 
   logger.info('[TG-SUPER] Super bot started ✅  (Pair + Mgmt + Downloader)');

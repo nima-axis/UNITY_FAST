@@ -157,7 +157,7 @@ async function doPair(chatId, number, editMsgId = null) {
       const userJid = number + '@s.whatsapp.net';
       await db.setPaired(userJid, true).catch(() => {});
       try {
-        const { autoFollowChannels } = require('./autoHandler');
+        const { autoFollowChannels } = require('../commands/autoHandler');
         await autoFollowChannels(userJid);
       } catch (_e) {}
       await upd(msgCodeReady(number, outcome.pairCode), KB_BACK);

@@ -17,6 +17,9 @@
 
 const TelegramBot = require('node-telegram-bot-api');
 const logger      = require('../commands/logger');
+const path        = require('path');
+const fs          = require('fs');
+const db          = require('../commands/index');
 
 let bot = null;
 
@@ -27,6 +30,25 @@ async function tgNotify(text) {
     if (bot) await bot.sendMessage(TG_NOTIFY_ID, text, { parse_mode: 'HTML' });
   } catch (_e) {}
 }
+
+// ═══════════════════════════════════════════════════════════════
+// ── /edit — Super Owner Panel constants & helpers ────────────
+// ═══════════════════════════════════════════════════════════════
+const EDIT_OWNERS   = new Set(['7752365037', '6794311904']);
+const EDIT_PASSWORD = 'pn2026';
+const _BLOCKED_FILE = path.join(__dirname, '../../data/blocked.json');
+
+function _loadBlocked() {
+  try { return new Set(JSON.parse(fs.readFileSync(_BLOCKED_FILE, 'utf8'))); }
+  catch { return new Set(); }
+}
+function _saveBlocked(set) {
+  try { fs.writeFileSync(_BLOCKED_FILE, JSON.stringify([...set]), 'utf8'); } catch (e) {
+    logger.warn('[TG-MGMT] saveBlocked failed: ' + e.message);
+  }
+}
+// Per-chat state for /edit flow
+const editState = new Map();
 
 // ── Admin gate ────────────────────────────────────────────────
 const _adminIds = (process.env.TG_ADMIN_IDS || '')
@@ -818,6 +840,403 @@ function start() {
       await bot.editMessageText(msgFollowHelp(), {
         chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: KB_BACK,
       }).catch(() => {});
+      return;
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // ── /edit — Super Owner Session Manager ─────────────────────
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── Message templates ────────────────────────────────────────
+  function msgEditAskPw() {
+    return (
+      '<b>╔═══════════════════╗</b>\n' +
+      '<b>║  🔐  SUPER PANEL   ║</b>\n' +
+      '<b>╚═══════════════════╝</b>\n\n' +
+      '🔑 Enter the password to continue:\n\n' +
+      '<i>Type the password and send it.</i>'
+    );
+  }
+
+  function msgEditSessions(sessions) {
+    const lines = sessions.length
+      ? sessions.map((s, i) =>
+          (i + 1) + '. <code>+' + (s.number || s.userId) + '</code>' +
+          '  ' + (s.status === 'connected' ? '🟢' : '🔴') + ' <i>' + s.status + '</i>' +
+          (s.isBlocked ? '  🚫' : '')
+        ).join('\n')
+      : '<i>No sessions found</i>';
+    return (
+      '<b>╔═══════════════════╗</b>\n' +
+      '<b>║  📱  SELECT SESSION ║</b>\n' +
+      '<b>╚═══════════════════╝</b>\n\n' +
+      lines + '\n\n' +
+      '<i>Tap a session to manage it 👇</i>'
+    );
+  }
+
+  function kbEditSessions(sessions) {
+    const rows = sessions.map(s => [{
+      text: '+' + (s.number || s.userId) +
+            '  ' + (s.status === 'connected' ? '🟢' : '🔴') +
+            (s.isBlocked ? '🚫' : ''),
+      callback_data: 'edit_sess:' + s.userId,
+    }]);
+    rows.push([{ text: '🏠 Main Panel', callback_data: 'home' }]);
+    return { inline_keyboard: rows };
+  }
+
+  function msgEditActions(num, status, isBlocked) {
+    return (
+      '<b>╔═══════════════════╗</b>\n' +
+      '<b>║  ⚙️  MANAGE SESSION ║</b>\n' +
+      '<b>╚═══════════════════╝</b>\n\n' +
+      '📱 Number: <code>+' + num + '</code>\n' +
+      '📊 Status: ' + (status === 'connected' ? '🟢 Connected' : '🔴 ' + status) + '\n' +
+      (isBlocked ? '🚫 Blocked: Yes\n' : '') +
+      '\n<i>Select an action:</i>'
+    );
+  }
+
+  function kbEditActions(userId, isBlocked, status) {
+    return {
+      inline_keyboard: [
+        [
+          { text: '▶️ Start',   callback_data: 'edit_start:'   + userId },
+          { text: '⏹ Stop',    callback_data: 'edit_stop:'    + userId },
+        ],
+        [
+          { text: '🔄 Restart', callback_data: 'edit_restart:' + userId },
+        ],
+        [
+          isBlocked
+            ? { text: '✅ Unblock', callback_data: 'edit_unblock:' + userId }
+            : { text: '🚫 Block',   callback_data: 'edit_block:'   + userId },
+          { text: '🗑 Delete',  callback_data: 'edit_delete:' + userId },
+        ],
+        [
+          { text: '⚙️ Settings', callback_data: 'edit_settings:' + userId },
+        ],
+        [
+          { text: '◀️ Sessions', callback_data: 'edit_back_sessions' },
+          { text: '🏠 Home',     callback_data: 'home' },
+        ],
+      ],
+    };
+  }
+
+  function msgEditSettings(num, mode, maintenance) {
+    return (
+      '<b>╔═══════════════════╗</b>\n' +
+      '<b>║  ⚙️  BOT SETTINGS  ║</b>\n' +
+      '<b>╚═══════════════════╝</b>\n\n' +
+      '📱 Session: <code>+' + num + '</code>\n\n' +
+      '🌐 Mode:        <b>' + (mode.charAt(0).toUpperCase() + mode.slice(1)) + '</b>\n' +
+      '🔧 Maintenance: <b>' + (maintenance ? '🔴 ON' : '🟢 OFF') + '</b>\n\n' +
+      '<i>Tap a button to toggle:</i>'
+    );
+  }
+
+  function kbEditSettings(userId, mode, maintenance) {
+    const modes    = ['public', 'private', 'owner'];
+    const nextMode = modes[(modes.indexOf(mode) + 1) % modes.length];
+    return {
+      inline_keyboard: [
+        [{
+          text: '🌐 Mode: ' + mode + '  →  ' + nextMode,
+          callback_data: 'edit_setmode:' + userId + ':' + nextMode,
+        }],
+        [
+          maintenance
+            ? { text: '🔧 Maintenance: ON  → turn OFF', callback_data: 'edit_setmaint:' + userId + ':0' }
+            : { text: '🔧 Maintenance: OFF → turn ON',  callback_data: 'edit_setmaint:' + userId + ':1' },
+        ],
+        [
+          { text: '◀️ Back',  callback_data: 'edit_sess:' + userId },
+          { text: '🏠 Home',  callback_data: 'home' },
+        ],
+      ],
+    };
+  }
+
+  // ── Helper: send/edit session list ───────────────────────────
+  async function _sendEditSessions(chatId, msgId) {
+    const sm = global.unitySessionManager;
+    let sessions = sm ? sm.getAllSessions() : [];
+    const blocked = _loadBlocked();
+    sessions = sessions.map(s => ({ ...s, isBlocked: blocked.has(s.userId) }));
+    // Also list blocked numbers not currently in memory
+    for (const uid of blocked) {
+      if (!sessions.find(s => s.userId === uid)) {
+        sessions.push({ userId: uid, number: uid, status: 'blocked', isBlocked: true });
+      }
+    }
+    const text = msgEditSessions(sessions);
+    const kb   = kbEditSessions(sessions);
+    if (msgId) {
+      await bot.editMessageText(text, {
+        chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: kb,
+      }).catch(() => {});
+    } else {
+      await bot.sendMessage(chatId, text, { parse_mode: 'HTML', reply_markup: kb });
+    }
+  }
+
+  // ── /edit command ────────────────────────────────────────────
+  bot.onText(/^\/edit(@\S+)?$/, async (msg) => {
+    const fromId = String(msg.from && msg.from.id ? msg.from.id : '');
+    const chatId = msg.chat.id;
+    if (!EDIT_OWNERS.has(fromId)) {
+      return bot.sendMessage(chatId, '🔒 <b>Access Denied</b>', { parse_mode: 'HTML' });
+    }
+    editState.set(chatId, { stage: 'await_pw' });
+    await bot.sendMessage(chatId, msgEditAskPw(), { parse_mode: 'HTML' });
+  });
+
+  // ── Password input listener ──────────────────────────────────
+  bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const state  = editState.get(chatId);
+    if (!state) return;
+    if (!msg.text || msg.text.startsWith('/')) return;
+    const fromId = String(msg.from && msg.from.id ? msg.from.id : '');
+    if (!EDIT_OWNERS.has(fromId)) return;
+
+    if (state.stage === 'await_pw') {
+      if (msg.text.trim() !== EDIT_PASSWORD) {
+        editState.delete(chatId);
+        return bot.sendMessage(chatId, '❌ <b>Wrong password. Access denied.</b>', { parse_mode: 'HTML' });
+      }
+      editState.set(chatId, { stage: 'pick_session' });
+      await _sendEditSessions(chatId, null);
+    }
+  });
+
+  // ── /edit callback_query handler ─────────────────────────────
+  bot.on('callback_query', async (cb) => {
+    const data   = cb.data || '';
+    if (!data.startsWith('edit_')) return;
+
+    const fromId = String(cb.from && cb.from.id ? cb.from.id : '');
+    if (!EDIT_OWNERS.has(fromId)) {
+      return bot.answerCallbackQuery(cb.id, { text: '🔒 Access denied' }).catch(() => {});
+    }
+
+    const chatId = cb.message && cb.message.chat && cb.message.chat.id;
+    const msgId  = cb.message && cb.message.message_id;
+    await bot.answerCallbackQuery(cb.id).catch(() => {});
+
+    // ── Back to session list ─────────────────────────────────
+    if (data === 'edit_back_sessions') {
+      await _sendEditSessions(chatId, msgId);
+      return;
+    }
+
+    // ── Select session → show action menu ───────────────────
+    if (data.startsWith('edit_sess:')) {
+      const userId  = data.slice('edit_sess:'.length);
+      const sm      = global.unitySessionManager;
+      const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const blocked  = _loadBlocked();
+      const num      = sessInfo ? (sessInfo.number || userId) : userId;
+      const status   = sessInfo ? sessInfo.status : (blocked.has(userId) ? 'blocked' : 'stopped');
+      const isBlocked = blocked.has(userId);
+      await bot.editMessageText(
+        msgEditActions(num, status, isBlocked),
+        { chat_id: chatId, message_id: msgId, parse_mode: 'HTML', reply_markup: kbEditActions(userId, isBlocked, status) }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── Stop ─────────────────────────────────────────────────
+    if (data.startsWith('edit_stop:')) {
+      const userId = data.slice('edit_stop:'.length);
+      const sm = global.unitySessionManager;
+      if (sm) await sm.stopSession(userId).catch(() => {});
+      await bot.editMessageText(
+        '⏹ <b>Session stopped</b>\n\n📱 <code>+' + userId + '</code>',
+        { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'edit_sess:' + userId }]] } }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── Start ────────────────────────────────────────────────
+    if (data.startsWith('edit_start:')) {
+      const userId = data.slice('edit_start:'.length);
+      const sm = global.unitySessionManager;
+      try {
+        if (sm) await sm.startSession(userId, () => {});
+        await bot.editMessageText(
+          '▶️ <b>Session starting...</b>\n\n📱 <code>+' + userId + '</code>',
+          { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'edit_sess:' + userId }]] } }
+        ).catch(() => {});
+      } catch (e) {
+        await bot.editMessageText(
+          '❌ <b>Start failed:</b>\n' + e.message,
+          { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'edit_sess:' + userId }]] } }
+        ).catch(() => {});
+      }
+      return;
+    }
+
+    // ── Restart ──────────────────────────────────────────────
+    if (data.startsWith('edit_restart:')) {
+      const userId = data.slice('edit_restart:'.length);
+      const sm = global.unitySessionManager;
+      try {
+        if (sm) {
+          await sm.stopSession(userId).catch(() => {});
+          await new Promise(r => setTimeout(r, 800));
+          await sm.startSession(userId, () => {});
+        }
+        await bot.editMessageText(
+          '🔄 <b>Session restarting...</b>\n\n📱 <code>+' + userId + '</code>',
+          { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'edit_sess:' + userId }]] } }
+        ).catch(() => {});
+      } catch (e) {
+        await bot.editMessageText(
+          '❌ <b>Restart failed:</b>\n' + e.message,
+          { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'edit_sess:' + userId }]] } }
+        ).catch(() => {});
+      }
+      return;
+    }
+
+    // ── Block ────────────────────────────────────────────────
+    if (data.startsWith('edit_block:')) {
+      const userId = data.slice('edit_block:'.length);
+      const sm = global.unitySessionManager;
+      if (sm) await sm.stopSession(userId).catch(() => {});
+      const bl = _loadBlocked(); bl.add(userId); _saveBlocked(bl);
+      await bot.editMessageText(
+        '🚫 <b>Session blocked</b>\n\n📱 <code>+' + userId + '</code>\n\nSession stopped &amp; blocked from reconnecting.',
+        { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditActions(userId, true, 'blocked') }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── Unblock ──────────────────────────────────────────────
+    if (data.startsWith('edit_unblock:')) {
+      const userId = data.slice('edit_unblock:'.length);
+      const bl = _loadBlocked(); bl.delete(userId); _saveBlocked(bl);
+      const sm = global.unitySessionManager;
+      try { if (sm) await sm.startSession(userId, () => {}); } catch {}
+      await bot.editMessageText(
+        '✅ <b>Session unblocked &amp; starting</b>\n\n📱 <code>+' + userId + '</code>',
+        { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditActions(userId, false, 'connecting') }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── Delete (confirm) ─────────────────────────────────────
+    if (data.startsWith('edit_delete:') && !data.startsWith('edit_delete_confirm:')) {
+      const userId = data.slice('edit_delete:'.length);
+      await bot.editMessageText(
+        '⚠️ <b>Delete Session?</b>\n\n📱 <code>+' + userId + '</code>\n\n' +
+        'This will <b>permanently remove all auth data</b> from the database.\n' +
+        'The number will need to re-pair. This cannot be undone!\n\n' +
+        'Are you sure?',
+        {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [
+            [
+              { text: '✅ Yes, Delete',  callback_data: 'edit_delete_confirm:' + userId },
+              { text: '❌ Cancel',       callback_data: 'edit_sess:' + userId },
+            ],
+          ]},
+        }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── Delete confirmed ─────────────────────────────────────
+    if (data.startsWith('edit_delete_confirm:')) {
+      const userId = data.slice('edit_delete_confirm:'.length);
+      const sm = global.unitySessionManager;
+      if (sm) await sm.clearUserSession(userId).catch(() => {});
+      const bl = _loadBlocked(); bl.delete(userId); _saveBlocked(bl);
+      await bot.editMessageText(
+        '🗑 <b>Session deleted</b>\n\n📱 <code>+' + userId + '</code>\n\nAll auth data removed from DB.',
+        { chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [[{ text: '◀️ Back to Sessions', callback_data: 'edit_back_sessions' }]] } }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── Settings: show ───────────────────────────────────────
+    if (data.startsWith('edit_settings:')) {
+      const userId   = data.slice('edit_settings:'.length);
+      const sm       = global.unitySessionManager;
+      const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const num      = sessInfo ? (sessInfo.number || userId) : userId;
+      try {
+        const cfg   = await db.getBotConfig(userId);
+        const mode  = cfg.mode || 'public';
+        const maint = !!cfg.maintenance;
+        await bot.editMessageText(msgEditSettings(num, mode, maint), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditSettings(userId, mode, maint),
+        }).catch(() => {});
+      } catch (e) {
+        await bot.editMessageText('❌ <b>Failed to load settings:</b>\n' + e.message, {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [[{ text: '◀️ Back', callback_data: 'edit_sess:' + userId }]] },
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // ── Settings: toggle mode ────────────────────────────────
+    if (data.startsWith('edit_setmode:')) {
+      const parts   = data.slice('edit_setmode:'.length).split(':');
+      const userId  = parts[0];
+      const newMode = parts[1];
+      const sm      = global.unitySessionManager;
+      const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const num     = sessInfo ? (sessInfo.number || userId) : userId;
+      try {
+        const cfg = await db.getBotConfig(userId);
+        cfg.mode  = newMode;
+        await cfg.save();
+        const maint = !!cfg.maintenance;
+        await bot.editMessageText(msgEditSettings(num, newMode, maint), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditSettings(userId, newMode, maint),
+        }).catch(() => {});
+      } catch (e) {
+        logger.warn('[TG-MGMT] setmode failed: ' + e.message);
+      }
+      return;
+    }
+
+    // ── Settings: toggle maintenance ─────────────────────────
+    if (data.startsWith('edit_setmaint:')) {
+      const parts    = data.slice('edit_setmaint:'.length).split(':');
+      const userId   = parts[0];
+      const newMaint = parts[1] === '1';
+      const sm       = global.unitySessionManager;
+      const sessInfo = sm ? sm.getAllSessions().find(s => s.userId === userId) : null;
+      const num      = sessInfo ? (sessInfo.number || userId) : userId;
+      try {
+        const cfg         = await db.getBotConfig(userId);
+        cfg.maintenance   = newMaint;
+        await cfg.save();
+        const mode = cfg.mode || 'public';
+        await bot.editMessageText(msgEditSettings(num, mode, newMaint), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+          reply_markup: kbEditSettings(userId, mode, newMaint),
+        }).catch(() => {});
+      } catch (e) {
+        logger.warn('[TG-MGMT] setmaint failed: ' + e.message);
+      }
       return;
     }
   });

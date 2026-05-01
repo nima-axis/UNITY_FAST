@@ -14,6 +14,9 @@ module.exports = {
     'schedule', 'forward', 'massdm',
     'wastatus', 'wstatus',
     'autoapprove',
+    // ── New status commands (2026 new methods) ──
+    'savestatus', 'dlstatus', 'statusemoji',
+    'autostatus', 'autostatusreact',
   ],
 
   async run({ sock, m }) {
@@ -21,6 +24,227 @@ module.exports = {
     const cmd = m.command;
     const text = m.text?.trim();
     const chat = m.chat;
+
+    // ══════════════════════════════════════════════════════════════
+    // ── NEW: Auto Status View toggle ─────────────────────────────
+    // ══════════════════════════════════════════════════════════════
+    if (cmd === 'autostatus') {
+      if (!m.isOwner) return m.reply(`❌ Owner only!\n\n${cfg.footer}`);
+      const botCfg = await db.getBotConfig(m.sessionOwner);
+      botCfg.features = botCfg.features || {};
+      const arg = (text || '').toLowerCase();
+      if (arg === 'on' || arg === 'off') {
+        botCfg.features.autoStatusView = arg === 'on';
+        await botCfg.save();
+        return m.reply(
+          `👁️ *Auto Status View: ${arg === 'on' ? '✅ ON' : '❌ OFF'}*\n\n` +
+          `Bot will ${arg === 'on' ? 'now automatically view' : 'no longer view'} contacts\' statuses.\n\n` +
+          `${cfg.footer}`
+        );
+      }
+      const cur = botCfg.features.autoStatusView ? '✅ ON' : '❌ OFF';
+      return m.reply(
+        `👁️ *Auto Status View: ${cur}*\n\n` +
+        `📌 Usage:\n` +
+        `*.autostatus on* — Enable\n` +
+        `*.autostatus off* — Disable\n\n` +
+        `${cfg.footer}`
+      );
+    }
+
+    // ── NEW: Auto Status React toggle ─────────────────────────────
+    if (cmd === 'autostatusreact') {
+      if (!m.isOwner) return m.reply(`❌ Owner only!\n\n${cfg.footer}`);
+      const botCfg = await db.getBotConfig(m.sessionOwner);
+      botCfg.features = botCfg.features || {};
+      const arg = (text || '').toLowerCase();
+      if (arg === 'on' || arg === 'off') {
+        botCfg.features.autoStatusReact = arg === 'on';
+        await botCfg.save();
+        const emoji = botCfg.features.autoStatusReactEmoji || '❤️';
+        return m.reply(
+          `❤️ *Auto Status React: ${arg === 'on' ? '✅ ON' : '❌ OFF'}*\n\n` +
+          `React emoji: *${emoji}*\n` +
+          `💡 Change emoji: *.statusemoji [emoji]*\n\n` +
+          `${cfg.footer}`
+        );
+      }
+      const cur = botCfg.features.autoStatusReact ? '✅ ON' : '❌ OFF';
+      const emoji = botCfg.features.autoStatusReactEmoji || '❤️';
+      return m.reply(
+        `❤️ *Auto Status React: ${cur}*\n` +
+        `React emoji: *${emoji}*\n\n` +
+        `📌 Usage:\n` +
+        `*.autostatusreact on* — Enable\n` +
+        `*.autostatusreact off* — Disable\n` +
+        `*.statusemoji [emoji]* — Change emoji\n\n` +
+        `${cfg.footer}`
+      );
+    }
+
+    // ── NEW: Set status react emoji ───────────────────────────────
+    if (cmd === 'statusemoji') {
+      if (!m.isOwner) return m.reply(`❌ Owner only!\n\n${cfg.footer}`);
+      if (!text) return m.reply(
+        `💡 Usage: *.statusemoji* [emoji]\n` +
+        `Example: *.statusemoji* 🔥\n\n` +
+        `${cfg.footer}`
+      );
+      const botCfg = await db.getBotConfig(m.sessionOwner);
+      botCfg.features = botCfg.features || {};
+      botCfg.features.autoStatusReactEmoji = text.trim();
+      await botCfg.save();
+      return m.reply(
+        `✅ *Status React Emoji set to: ${text.trim()}*\n\n` +
+        `Enable auto react: *.autostatusreact on*\n\n` +
+        `${cfg.footer}`
+      );
+    }
+
+    // ── NEW: Save / Download latest received status ───────────────
+    if (cmd === 'savestatus' || cmd === 'dlstatus') {
+      if (!m.isOwner) return m.reply(`❌ Owner only!\n\n${cfg.footer}`);
+
+      // First, make sure autoStatusView is enabled so statuses are captured
+      const botCfg = await db.getBotConfig(m.sessionOwner);
+      const viewEnabled = botCfg.features?.autoStatusView || botCfg.features?.autoRead;
+      if (!viewEnabled) {
+        return m.reply(
+          `⚠️ *Status View not enabled!*\n\n` +
+          `Enable first:\n` +
+          `*.autostatus on*\n\n` +
+          `After enabling, wait for contacts to post statuses. ` +
+          `Then use *.savestatus* to download.\n\n` +
+          `${cfg.footer}`
+        );
+      }
+
+      let { getRecentStatuses } = require('./autoHandler');
+      const recents = getRecentStatuses(m.sessionOwner);
+
+      // Filter media-only statuses
+      const mediaStatuses = recents.filter(s => s.hasMedia);
+
+      if (!mediaStatuses.length) {
+        // Show all statuses even if no media
+        if (!recents.length) {
+          return m.reply(
+            `📭 *No statuses received yet.*\n\n` +
+            `Make sure *.autostatus on* is enabled and contacts post statuses.\n\n` +
+            `${cfg.footer}`
+          );
+        }
+        return m.reply(
+          `📋 *Recent statuses (text only):*\n\n` +
+          recents.slice(0, 5).map((s, i) => {
+            const from = s.key.participant?.split('@')[0] || 'unknown';
+            const ago  = Math.round((Date.now() - s.time) / 60000);
+            return `${i + 1}. +${from} — ${s.type} — ${ago}m ago`;
+          }).join('\n') +
+          `\n\n📌 No media statuses in recent list.\n\n${cfg.footer}`
+        );
+      }
+
+      // Download the latest media status
+      const latest = mediaStatuses[0];
+      await m.react('⬇️');
+      try {
+        const from = latest.key.participant?.split('@')[0] || 'unknown';
+        const buf  = await sock.downloadMediaMessage(latest.msg);
+        if (!buf || !buf.length) throw new Error('Empty buffer');
+
+        const isVideo = latest.type === 'videoMessage';
+        const isAudio = latest.type === 'audioMessage';
+
+        if (isVideo) {
+          await sock.sendMessage(chat, {
+            video:    buf,
+            mimetype: 'video/mp4',
+            fileName: `status_${from}.mp4`,
+            caption:
+              `🎬 *Status Video*\n` +
+              `👤 From: +${from}\n` +
+              `⏰ ${new Date(latest.time).toLocaleString('en-LK')}\n\n` +
+              `${cfg.footer}`,
+          }, { quoted: m.msg });
+        } else if (isAudio) {
+          await sock.sendMessage(chat, {
+            audio:    buf,
+            mimetype: 'audio/mp4',
+            ptt:      false,
+          }, { quoted: m.msg });
+        } else {
+          // Image (default)
+          const captionText = latest.msg.message?.imageMessage?.caption || '';
+          await sock.sendMessage(chat, {
+            image:   buf,
+            caption:
+              `🖼️ *Status Image*\n` +
+              `👤 From: +${from}\n` +
+              `⏰ ${new Date(latest.time).toLocaleString('en-LK')}\n` +
+              (captionText ? `💬 ${captionText}\n` : '') +
+              `\n${cfg.footer}`,
+          }, { quoted: m.msg });
+        }
+        await m.react('✅');
+      } catch (e) {
+        await m.react('❌');
+        return m.reply(
+          `❌ *Failed to download status.*\n` +
+          `Error: ${e.message}\n\n` +
+          `The status may have expired or media is unavailable.\n\n` +
+          `${cfg.footer}`
+        );
+      }
+      return;
+    }
+
+    // ── NEW: Manual statusreact (react to a quoted/last status) ───
+    if (cmd === 'statusreact') {
+      if (!m.isOwner) return m.reply(`❌ Owner only!\n\n${cfg.footer}`);
+
+      let { getRecentStatuses } = require('./autoHandler');
+      const recents = getRecentStatuses(m.sessionOwner);
+      if (!recents.length) {
+        return m.reply(
+          `📭 *No statuses in memory.*\n\n` +
+          `Enable *.autostatus on* and wait for contacts to post.\n\n` +
+          `${cfg.footer}`
+        );
+      }
+
+      const emoji  = text || '❤️';
+      const latest = recents[0];
+
+      // Try react using new Baileys v7 method
+      let reacted = false;
+      try {
+        await sock.sendMessage('status@broadcast', {
+          react: { text: emoji, key: latest.key },
+        }, { statusJidList: [latest.key.participant || latest.key.remoteJid] });
+        reacted = true;
+      } catch (_e1) {}
+
+      // Fallback: sendMessage with react to remoteJid
+      if (!reacted) {
+        try {
+          await sock.sendMessage(latest.key.remoteJid, {
+            react: { text: emoji, key: latest.key },
+          });
+          reacted = true;
+        } catch (_e2) {}
+      }
+
+      const from = latest.key.participant?.split('@')[0] || 'unknown';
+      if (reacted) {
+        return m.reply(
+          `${emoji} *Reacted to status!*\n` +
+          `👤 From: +${from}\n\n` +
+          `${cfg.footer}`
+        );
+      }
+      return m.reply(`❌ Could not react to status.\n\n${cfg.footer}`);
+    }
 
     // ── Read status ───────────────────────────────────────────
     if (cmd === 'readsw') {

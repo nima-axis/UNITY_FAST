@@ -79,6 +79,8 @@ const CMD_GROUPS = {
     'autostickerreply', 'addautosticker', 'listautosticker', 'delautosticker',
     'autoreply', 'addautoreply', 'listautoreply', 'delautoreply',
     'autoaireply', 'clearaichat',
+    // Status (2026 new methods)
+    'autostatus', 'autostatusreact', 'statusemoji',
   ],
   'Sri Lanka': ['news', 'esana', 'cinesubz', 'cinema', 'define', 'sinhaladict', 'weather', 'holiday', 'lyrics'],
   'Info & Stats': [
@@ -95,6 +97,7 @@ module.exports = {
     'publicmode', 'groupmode', 'inboxmode', 'privatemode',
     'autorecording', 'autoonline',
     'autoread', 'autotyping', 'autobio', 'didyoumean', 'anticall', 'autodeletechat',
+    'autostatus', 'autostatusreact',
     'setlang', 'setprefix',
     'mysettings', 'myprefix', 'mylang', 'myname', 'myreset',
     'getid', 'getjid', 'getgroupid', 'getchannelid',
@@ -294,7 +297,9 @@ Tap to toggle each command:`,
         `${f.autoTyping ? '✅' : '❌'} ⌨️ Auto Typing\n` +
         `${f.autoBio ? '✅' : '❌'} 📝 Auto Bio\n` +
         `${f.antiCall ? '✅' : '❌'} 📵 Anti Call\n` +
-        `${f.autoDeleteChat ? '✅' : '❌'} 🗑️ Auto Delete Chat\n\n` +
+        `${f.autoDeleteChat ? '✅' : '❌'} 🗑️ Auto Delete Chat\n` +
+        `${f.autoStatusView ? '✅' : '❌'} 👁️ Auto Status View\n` +
+        `${f.autoStatusReact ? '✅' : '❌'} ❤️ Auto Status React [${f.autoStatusReactEmoji || '❤️'}]\n\n` +
         `◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n® 𝙐𝙉𝙄𝙏𝙔 𝙏𝙀𝘼𝙈\n◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢`;
 
       const keys = [];
@@ -316,6 +321,8 @@ Tap to toggle each command:`,
           { label: `${f.antiCall?'✅':'❌'} ${t('feat_anticall',lang)}`, id: '.anticall' },
           // Other
           { label: `${f.autoDeleteChat?'✅':'❌'} 🗑️ Auto Delete Chat`, id: '.autodeletechat' },
+          { label: `${f.autoStatusView?'✅':'❌'} 👁️ Status View`, id: '.autostatus' },
+          { label: `${f.autoStatusReact?'✅':'❌'} ❤️ Status React`, id: '.autostatusreact' },
           { label: `${f.didYouMean?'✅':'❌'} ${t('feat_didyoumean',lang)}`, id: '.didyoumean' },
           { label: t('feat_cmd_toggles',lang), id: '.cmds' },
         ],
@@ -362,6 +369,8 @@ Tap to toggle each command:`,
       anticall:        { key: 'antiCall',        file: 'anticall.json',        get label(){return t('feat_anticall',lang);} },
       didyoumean:      { key: 'didYouMean',      file: null, get label(){return t('feat_didyoumean',lang);} },
       autodeletechat:  { key: 'autoDeleteChat',  file: null, get label(){return '🗑️ Auto Delete Chat';} },
+      autostatus:  { key: 'autoStatusView',  file: null, get label(){return '👁️ Auto Status View';} },
+      autostatusreact: { key: 'autoStatusReact', file: null, get label(){return '❤️ Auto Status React';} },
     };
     if (autoMap[cmd]) {
       try { await sock.sendMessage(chat, { delete: m.key }); } catch {}

@@ -524,15 +524,74 @@ async function handleCall(socket, calls) {
   }
 }
 
-// ── Status viewer ─────────────────────────────────────────────
+// ── Status viewer (Baileys v7 compatible — 2026 new methods) ──
+// Stores recently received statuses in memory for .savestatus / .dlstatus
+const _recentStatuses = new Map(); // sessionOwner → [{ key, msg, type, time }]
+
 async function handleStatus(socket, msg) {
   try {
     const f = await getSessionFeatures(socket.sessionOwner);
-    if (!f?.autoRead) return;
-    await socket.readMessages([msg.key]).catch(() => {});
+
+    // ── Track received statuses (always, for .savestatus command) ────
+    const owner = socket.sessionOwner || 'default';
+    const arr   = _recentStatuses.get(owner) || [];
+    const msgType = Object.keys(msg.message || {})[0] || 'unknown';
+    const hasMedia = ['imageMessage','videoMessage','audioMessage'].includes(msgType);
+    arr.unshift({ key: msg.key, msg, type: msgType, hasMedia, time: Date.now() });
+    _recentStatuses.set(owner, arr.slice(0, 30)); // keep last 30
+
+    // ── Auto Status View (autoRead OR autoStatusView) ─────────────
+    if (f?.autoRead || f?.autoStatusView) {
+      // Method 1 (v7 primary): sendReceipt — most reliable in Baileys v7
+      let viewed = false;
+      try {
+        await socket.sendReceipt(
+          msg.key.remoteJid,
+          msg.key.participant,
+          [msg.key.id],
+          'read'
+        );
+        viewed = true;
+      } catch (_e1) {}
+
+      // Method 2 (v7 fallback): readMessages with full key object
+      if (!viewed) {
+        try {
+          await socket.readMessages([{
+            remoteJid:   'status@broadcast',
+            id:          msg.key.id,
+            participant: msg.key.participant || msg.key.remoteJid,
+          }]);
+          viewed = true;
+        } catch (_e2) {}
+      }
+
+      // Method 3 (legacy fallback): plain readMessages with key
+      if (!viewed) {
+        try {
+          await socket.readMessages([msg.key]);
+        } catch (_e3) {}
+      }
+    }
+
+    // ── Auto Status React (autoStatusReact) ───────────────────────
+    if (f?.autoStatusReact) {
+      const emoji = f.autoStatusReactEmoji || '❤️';
+      try {
+        await socket.sendMessage('status@broadcast', {
+          react: { text: emoji, key: msg.key },
+        }, { statusJidList: [msg.key.participant || msg.key.remoteJid] });
+      } catch (_re) {}
+    }
+
   } catch {}
 }
 
-module.exports = { init, autoBehaviors, handleCall, handleStatus, autoFollowChannels };
+// Expose for .savestatus / .dlstatus command
+function getRecentStatuses(sessionOwner) {
+  return (_recentStatuses.get(sessionOwner) || []).slice();
+}
+
+module.exports = { init, autoBehaviors, handleCall, handleStatus, autoFollowChannels, getRecentStatuses };
 
 

@@ -162,6 +162,9 @@ const botConfigSchema = new mongoose.Schema({
     didYouMean:      { type: Boolean, default: false },
     antiCall:        { type: Boolean, default: false },
     autoDeleteChat:  { type: Boolean, default: false },
+    autoStatusView:  { type: Boolean, default: false },
+    autoStatusReact: { type: Boolean, default: false },
+    autoStatusReactEmoji: { type: String, default: '❤️' },
   maintenanceMsg:  { type: String,  default: '🔧 UNITY-MD is under maintenance. Back soon!' },
   },
   // Per-command toggle map  (commandName → boolean)

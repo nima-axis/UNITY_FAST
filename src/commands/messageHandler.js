@@ -494,9 +494,13 @@ ${cfg.footer}`);
         if (!m.isOwner || !m.isFromChannel3) return;
       } else if (plugin.access === 'owner') {
         if (userLvl < required) return;
-        const groupAllowed = ['clearchat', 'chatclear', 'getid', 'getjid', 'getgroupid', 'getchannelid'];
-        if (!m.isSelfChat && !groupAllowed.includes(m.command)) return;
-        if (!m.isSelfChat && groupAllowed.includes(m.command) && !m.isOwner) return;
+        // Owner can use owner-access commands in ANY chat (group, inbox, anywhere)
+        // Non-owners with 'owner' category (paired) are restricted to self-chat only
+        if (!m.isOwner) {
+          const groupAllowed = ['clearchat', 'chatclear', 'getid', 'getjid', 'getgroupid', 'getchannelid'];
+          if (!m.isSelfChat && !groupAllowed.includes(m.command)) return;
+          if (!m.isSelfChat && groupAllowed.includes(m.command)) return;
+        }
       } else {
         if (userLvl < required) return;
       }

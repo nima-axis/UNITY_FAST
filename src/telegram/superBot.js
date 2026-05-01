@@ -10,8 +10,6 @@
  *   /pair <number>       — Pair a WhatsApp number
  *   /ping                — Latency check
  *   /runtime             — Uptime & memory
- *   /sessions / /which   — Connected WA sessions
- *   /send <number> <msg> — Send WA message via session
  *   /yt   <url>          — YouTube MP4 download
  *   /mp3  <url>          — YouTube MP3 download
  *   /tt   <url>          — TikTok download (no watermark)
@@ -478,7 +476,7 @@ const KB_MAIN = {
   inline_keyboard: [
     [
       { text: '🔗 Pair WA Number', callback_data: 'pair_home'    },
-      { text: '📱 Sessions',       callback_data: 'cmd_sessions' },
+
     ],
     [
       { text: '🏓 Ping',           callback_data: 'cmd_ping'    },
@@ -486,7 +484,7 @@ const KB_MAIN = {
     ],
     [
       { text: '📥 Download Help',  callback_data: 'help_dl'   },
-      { text: '💬 Send WA Msg',    callback_data: 'help_send' },
+
     ],
   ],
 };
@@ -664,21 +662,6 @@ function msgRuntime() {
   );
 }
 
-function msgSessions(total, connected, pairing, others, lines) {
-  return (
-    '<b>╔═══════════════════╗</b>\n' +
-    '<b>║  📱  WA SESSIONS    ║</b>\n' +
-    '<b>╚═══════════════════╝</b>\n\n' +
-    '🟢 Connected: <b>' + connected + '</b>\n' +
-    '🔄 Pairing:   <b>' + pairing + '</b>\n' +
-    '⚫ Other:     <b>' + others + '</b>\n' +
-    '📊 Total:     <b>' + total + '</b>\n\n' +
-    '━━━━━━━━━━━━━━━━━━━━━\n' +
-    '<b>Connected Numbers:</b>\n' +
-    lines +
-    '\n━━━━━━━━━━━━━━━━━━━━━'
-  );
-}
 
 function msgDlHelp() {
   return (
@@ -702,20 +685,6 @@ function msgDlHelp() {
   );
 }
 
-function msgSendHelp() {
-  return (
-    '<b>╔═══════════════════╗</b>\n' +
-    '<b>║  💬  SEND WA MSG    ║</b>\n' +
-    '<b>╚═══════════════════╝</b>\n\n' +
-    '<b>Format:</b>\n' +
-    '<code>/send &lt;number&gt; &lt;message&gt;</code>\n\n' +
-    '<b>Example:</b>\n' +
-    '<code>/send 94771234567 Hello from FAST Bot!</code>\n\n' +
-    '━━━━━━━━━━━━━━━━━━━━━\n' +
-    '💡 Uses the first connected WA session.\n' +
-    '📞 Include country code in the number.'
-  );
-}
 
 // ═══════════════════════════════════════════════════════════════
 // SECTION 5 — BOT START
@@ -782,50 +751,9 @@ function start() {
     bot.sendMessage(msg.chat.id, msgRuntime(), { parse_mode: 'HTML', reply_markup: KB_BACK });
   });
 
-  bot.onText(/^\/(sessions|which)(@\S+)?$/, async (msg) => {
-    if (!isAdmin(msg.from)) return;
-    const sm = await getSM(30000);
-    if (!sm) return bot.sendMessage(msg.chat.id, '❌ Session manager not ready. Try again in a moment.', { parse_mode: 'HTML' });
-    const all   = sm.getAllSessions();
-    const conn  = all.filter(s => s.status === 'connected');
-    const pair  = all.filter(s => s.status === 'pairing');
-    const other = all.filter(s => s.status !== 'connected' && s.status !== 'pairing');
-    const lines = conn.length
-      ? conn.map((s, i) => (i + 1) + '. <code>+' + (s.number || s.userId) + '</code>' + (s.name ? '  (' + s.name + ')' : '')).join('\n')
-      : '<i>None connected</i>';
-    bot.sendMessage(msg.chat.id, msgSessions(all.length, conn.length, pair.length, other.length, lines), { parse_mode: 'HTML', reply_markup: KB_BACK });
-  });
 
-  bot.onText(/^\/send(?:@\S+)?\s+(\d+)\s+([\s\S]+)$/, async (msg, match) => {
-    if (!isAdmin(msg.from)) return;
-    const number = match[1].trim();
-    const text   = match[2].trim();
-    if (number.length < 7 || !text) return bot.sendMessage(msg.chat.id, msgSendHelp(), { parse_mode: 'HTML', reply_markup: KB_BACK });
 
-    const sm = await getSM(8000);
-    if (!sm) return bot.sendMessage(msg.chat.id, '❌ <b>Session manager not ready.</b>', { parse_mode: 'HTML' });
-    const sessions = sm.getAllSessions().filter(s => s.status === 'connected');
-    if (!sessions.length) return bot.sendMessage(msg.chat.id, '❌ <b>No connected sessions.</b>', { parse_mode: 'HTML' });
 
-    const sess = sm.getSession(sessions[0].userId);
-    const sock = sess && sess.sock;
-    if (!sock) return bot.sendMessage(msg.chat.id, '❌ <b>Session socket not ready.</b>', { parse_mode: 'HTML' });
-
-    try {
-      await sock.sendMessage(number.replace(/\D/g, '') + '@s.whatsapp.net', { text });
-      bot.sendMessage(msg.chat.id,
-        '✅ <b>Message Sent!</b>\n\n📞 To: <code>+' + number + '</code>\n💬 <i>' + text.slice(0, 100) + '</i>',
-        { parse_mode: 'HTML', reply_markup: KB_BACK }
-      );
-    } catch (e) {
-      bot.sendMessage(msg.chat.id, '❌ <b>Failed:</b> <code>' + e.message + '</code>', { parse_mode: 'HTML' });
-    }
-  });
-
-  bot.onText(/^\/send(@\S+)?$/, (msg) => {
-    if (!isAdmin(msg.from)) return;
-    bot.sendMessage(msg.chat.id, msgSendHelp(), { parse_mode: 'HTML', reply_markup: KB_BACK });
-  });
 
   // ── DOWNLOADS ────────────────────────────────────────────────
   bot.onText(/^\/yt(?:@\S+)?\s+(https?:\/\/\S+)$/, async (msg, match) => {
@@ -904,7 +832,7 @@ function start() {
     if (data === 'pair_help')        return edit(msgPairHelp());
     if (data.startsWith('retry_'))   return doPair(chatId, data.replace('retry_', ''), msgId);
     if (data === 'help_dl')          return edit(msgDlHelp());
-    if (data === 'help_send')        return edit(msgSendHelp());
+
 
     // ── Admin-only buttons ─────────────────────────────────────
     if (!isAdmin(cb.from)) return;
@@ -915,18 +843,7 @@ function start() {
       return edit(msgPing(Date.now() - t));
     }
     if (data === 'cmd_runtime') return edit(msgRuntime());
-    if (data === 'cmd_sessions') {
-      const sm = await getSM(8000);
-      if (!sm) return edit('❌ Session manager not ready. Try again in a moment.');
-      const all   = sm.getAllSessions();
-      const conn  = all.filter(s => s.status === 'connected');
-      const pair  = all.filter(s => s.status === 'pairing');
-      const other = all.filter(s => s.status !== 'connected' && s.status !== 'pairing');
-      const lines = conn.length
-        ? conn.map((s, i) => (i + 1) + '. <code>+' + (s.number || s.userId) + '</code>' + (s.name ? '  (' + s.name + ')' : '')).join('\n')
-        : '<i>None connected</i>';
-      return edit(msgSessions(all.length, conn.length, pair.length, other.length, lines));
-    }
+
   });
 
   logger.info('[TG-SUPER] Super bot started ✅  (Pair + Mgmt + Downloader)');

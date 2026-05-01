@@ -563,18 +563,6 @@ const subMenus = {
       ['.msg',            'Send Message'],
       ['.schedule',       'Schedule Message'],
       ['.forward',        'Forward Message'],
-      ['.upsw',           'Upload to Status'],
-      ['.readsw',         'Status Viewer List'],
-      ['.statuslist',     'Status Stats'],
-      ['.statusreact',    'React to Last Status'],
-      ['.statusview',     'View Status'],
-      ['.savestatus',     'Save/Download Status'],
-      ['.dlstatus',       'Download Status'],
-      ['.autostatus',     'Auto View Statuses'],
-      ['.autostatusreact','Auto React to Statuses'],
-      ['.statusemoji',    'Set Status React Emoji'],
-      ['.wastatus',       'WA Status Video'],
-      ['.wstatus',        'WA Status (Short)'],
       ['.reactchannel',   'React to Channel'],
       ['.channelschedule','Channel Schedule (Full)'],
       ['.channelpromo',   'Channel Promo (Full)'],
@@ -681,6 +669,7 @@ const subMenus = {
 module.exports = {
   commands: [
     'menu', 'help', 'm',
+    'allmenu', 'listmenu',
     // ── Category menus (Level 2) ──────────────────────────────
     'menu_system',
     'menu_group',
@@ -713,6 +702,61 @@ module.exports = {
     const greeting = hour < 12 ? tr('menu_greeting_morn') : hour < 17 ? tr('menu_greeting_aft') : tr('menu_greeting_eve');
     const date = now.format('ddd, DD MMM YYYY');
     const time = now.format('HH:mm');
+
+    // ── All Commands List (allmenu / listmenu) ───────────────────────────────
+    if (cmd === 'allmenu' || cmd === 'listmenu') {
+      const allSections = [];
+
+      for (const [key, sub] of Object.entries(subMenus)) {
+        const lines = [];
+        for (const [c, desc] of sub.commands) {
+          lines.push(`  ${c} — ${desc}`);
+        }
+        allSections.push(
+          `┌─────────────────────\n` +
+          `│ ${sub.title}\n` +
+          `└─────────────────────\n` +
+          lines.join('\n')
+        );
+      }
+
+      const header =
+        `▛▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▜\n` +
+        `◤◢ 🧲 𝙐𝙉𝙄𝙏𝙔-𝙈𝘿 — 𝘼𝙇𝙇 𝘾𝙊𝙈𝙈𝘼𝙉𝘿𝙎 ◤◢\n` +
+        `▙▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▟\n\n` +
+        `📦 *Total: ${plugins.size}+ commands*\n` +
+        `🔑 Prefix: *.* or */\n\n`;
+
+      const footer =
+        `\n\n◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢\n® 𝙐𝙉𝙄𝙏𝙔 𝙏𝙀𝘼𝙈\n◤◢◤◢◤◢◤◢◤◢◤◢◤◢◤◢`;
+
+      const fullText = header + allSections.join('\n\n') + footer;
+
+      // WhatsApp single message limit ~65000 chars — split if needed
+      const LIMIT = 60000;
+      if (fullText.length <= LIMIT) {
+        await sock.sendMessage(chat, { text: fullText }, { quoted: m.msg });
+      } else {
+        const chunks = [];
+        let current = header;
+        for (const section of allSections) {
+          if ((current + '\n\n' + section).length > LIMIT) {
+            chunks.push(current);
+            current = section;
+          } else {
+            current += (current === header ? '' : '\n\n') + section;
+          }
+        }
+        chunks.push(current + footer);
+        for (let i = 0; i < chunks.length; i++) {
+          await sock.sendMessage(chat, {
+            text: chunks[i] + (chunks.length > 1 ? `\n\n📄 *Page ${i + 1}/${chunks.length}*` : ''),
+          }, { quoted: i === 0 ? m.msg : undefined });
+          if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 500));
+        }
+      }
+      return;
+    }
 
     // ── Level 3: Sub-menu handler ────────────────────────────────────────────
     const subKey = cmd.replace('menu_', '');

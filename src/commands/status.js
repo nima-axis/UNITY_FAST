@@ -11,7 +11,7 @@ module.exports = {
     'readsw', 'statuslist', 'upsw',
     'statusreact', 'statusview',
     'bc', 'broadcast',
-    'schedule', 'forward', 'massdm',
+    'schedule', 'forward',
     'wastatus', 'wstatus',
     'autoapprove',
     // ── New status commands (2026 new methods) ──
@@ -348,7 +348,7 @@ module.exports = {
         } catch (e) {
           failed++;
         }
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 3000 + Math.floor(Math.random() * 2000)));
       }
 
       return m.reply(
@@ -414,7 +414,7 @@ module.exports = {
             forward: { key: m.quoted.key, message: m.quoted.message }
           }).catch(() => {});
           sent++;
-          await new Promise(r => setTimeout(r, 800));
+          await new Promise(r => setTimeout(r, 2000 + Math.floor(Math.random() * 2000)));
         }
         return m.reply(`✅ *Forwarded to ${sent} groups!*\n\n${cfg.footer}`);
       }
@@ -423,41 +423,6 @@ module.exports = {
         forward: { key: m.quoted.key, message: m.quoted.message }
       });
       return m.reply(`✅ *Forwarded!*\n\n${cfg.footer}`);
-    }
-
-    // ── Mass DM ───────────────────────────────────────────────
-    if (cmd === 'massdm') {
-      if (!m.isOwner) return m.reply(`${tr('err_owner_only2')}\n\n${cfg.footer}`);
-      if (!m.isGroup) return m.reply(
-        `📌 Use this in a group to DM all members.\n\n${cfg.footer}`
-      );
-      if (!text) return m.reply(
-        `📌 Usage: *.massdm* [message]\n\n${cfg.footer}`
-      );
-
-      const meta = await sock.groupMetadata(chat);
-      await m.reply(`📤 *Sending DMs to ${meta.participants.length} members...*`);
-
-      let sent = 0, failed = 0;
-      for (const p of meta.participants) {
-        if (p.id === sock.user?.id) continue;
-        try {
-          await sock.sendMessage(p.id, {
-            text: `${text}\n\n${cfg.footer}`
-          });
-          sent++;
-        } catch (e) {
-          failed++;
-        }
-        await new Promise(r => setTimeout(r, 1500));
-      }
-
-      return m.reply(
-        `✅ *Mass DM complete!*\n\n` +
-        `📤 Sent: ${sent}\n` +
-        `❌ Failed: ${failed}\n\n` +
-        `${cfg.footer}`
-      );
     }
 
     // ── WA Status Video Downloader ────────────────────────────

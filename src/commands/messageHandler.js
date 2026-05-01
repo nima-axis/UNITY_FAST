@@ -549,7 +549,7 @@ ${cfg.footer}`);
       ) {
         const fwdCtx = {
           isForwarded: true,
-          forwardingScore: 999,
+          forwardingScore: 1,
           remoteJid:   'status@broadcast',
           participant: '0@s.whatsapp.net',
           fromMe:      false,

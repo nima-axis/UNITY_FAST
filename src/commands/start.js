@@ -305,7 +305,7 @@ async function connectToWhatsApp() {
               caption: onlineMsg,
               contextInfo: {
                 isForwarded: true,
-                forwardingScore: 999,
+                forwardingScore: 1,
                 forwardedNewsletterMessageInfo: {
                   newsletterJid:   '120363419201971095@newsletter',
                   newsletterName:  'UNITY-MD',

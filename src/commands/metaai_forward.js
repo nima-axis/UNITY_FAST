@@ -18,7 +18,7 @@ const META_AI_JID = '120363166619088141@newsletter';
 function metaAIContext() {
   return {
     isForwarded: true,
-    forwardingScore: 999,
+    forwardingScore: 1,
     forwardedNewsletterMessageInfo: {
       newsletterJid: META_AI_JID,
       newsletterName: 'Unity Status',

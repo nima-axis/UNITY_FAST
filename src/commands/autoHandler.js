@@ -32,6 +32,10 @@ async function getSessionFeatures(sessionOwner) {
         autoReact:         dbF.autoReact         ?? jsonF.autoReact         ?? false,
         autoChannelReact:  dbF.autoChannelReact  ?? false,
         autoChannelReactJid: dbF.autoChannelReactJid ?? '',
+        // ── Status view/react (saved to DB by .autostatus / .autostatusreact) ──
+        autoStatusView:       dbF.autoStatusView       ?? jsonF.autoStatusView       ?? false,
+        autoStatusReact:      dbF.autoStatusReact      ?? jsonF.autoStatusReact      ?? false,
+        autoStatusReactEmoji: dbF.autoStatusReactEmoji ?? jsonF.autoStatusReactEmoji ?? '❤️',
       };
     }
   } catch {}

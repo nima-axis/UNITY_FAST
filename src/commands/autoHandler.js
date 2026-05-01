@@ -282,7 +282,10 @@ async function autoBehaviors(socket, msg) {
   const f = await getSessionFeatures(socket.sessionOwner);
 
   // ── Auto presence (typing/recording before reply) ─────────
-  // After showing typing/recording, revert to unavailable if autoOnline is OFF
+  // Only touch presence if a feature actually needs it.
+  // If autoOnline is OFF and no auto-presence/recording, send NO presence
+  // update at all — proactively sending 'unavailable' still causes a brief
+  // "online" flash on WhatsApp because the server acks the socket activity.
   const afterPresence = f?.autoOnline ? 'available' : 'unavailable';
 
   if (f?.autoPresence) {
@@ -297,11 +300,12 @@ async function autoBehaviors(socket, msg) {
   }
 
   if (f?.autoOnline) {
+    // Explicit online mode — keep broadcasting available
     socket.sendPresenceUpdate('available').catch(() => {});
-  } else {
-    // Actively push unavailable so WhatsApp hides our online status
-    socket.sendPresenceUpdate('unavailable').catch(() => {});
   }
+  // ⚠️ Removed: the old `else { sendPresenceUpdate('unavailable') }` block.
+  // Sending unavailable on every message paradoxically triggers a brief
+  // "online" flash. True offline = simply never sending 'available'.
 
   if (f?.autoRead) {
     socket.readMessages([msg.key]).catch(() => {});

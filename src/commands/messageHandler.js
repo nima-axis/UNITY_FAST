@@ -242,7 +242,14 @@ async function handleMessage(sock, msg) {
       } catch {}
     }
 
-    if (!(await checkMode(m))) return;
+    if (!(await checkMode(m))) {
+      // .save must work in ALL modes regardless of bot mode setting
+      if (m.isCmd && m.command === 'save') {
+        // allow through — do not return
+      } else {
+        return;
+      }
+    }
 
     try { const { checkAFK } = require('./social'); checkAFK(sock, m); } catch {}
 

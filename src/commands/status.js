@@ -31,8 +31,6 @@ module.exports = {
     // ── .save — Reply to a status → forward media to own chat ────
     // ══════════════════════════════════════════════════════════════
     if (cmd === 'save') {
-      if (!m.isOwner) return m.reply(`❌ Owner only!\n\n${cfg.footer}`);
-
       const quotedMsg = m.quoted;
       if (!quotedMsg) {
         return m.reply(

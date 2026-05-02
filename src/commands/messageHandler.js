@@ -235,38 +235,38 @@ async function handleMessage(sock, msg) {
 
         // ── Auto AI Reply — runs BEFORE checkMode (replies to all users) ──
     if (!m.isCmd && !m.key?.fromMe && m.body?.trim()) {
-      try {
-        const { handleAutoAiReply } = require('./autoAiReply');
-        const handled = await handleAutoAiReply(sock, m);
-        if (handled) return;
-      } catch {}
-    }
 
-    // ── Prefix-less "save" / "send" — status context only ────────
-    if (!m.isCmd && !m.key?.fromMe) {
-      const _rawBody = (m.body || '').trim().toLowerCase();
-      const _isSave  = _rawBody === 'save' || _rawBody.startsWith('save ');
-      const _isSend  = _rawBody === 'send' || _rawBody.startsWith('send ');
-      if (_isSave || _isSend) {
-        // m.quoted OR contextInfo quoted (status replies sometimes skip m.quoted)
-        const _hasQuoted =
-          m.quoted ||
-          msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        if (_hasQuoted) {
+      // ── Prefix-less save/send — inject BEFORE autoAiReply ────────
+      // Must run here so autoAiReply cannot swallow the message.
+      // Trigger: body is exactly "save"/"send" (any case) or starts with
+      // "save "/"send " AND a quoted message (or contextInfo quote) exists.
+      const _sl = (m.body || '').trim().toLowerCase();
+      const _isSaveCmd = _sl === 'save' || _sl.startsWith('save ') ||
+                         _sl === 'send' || _sl.startsWith('send ');
+      if (_isSaveCmd) {
+        const _ctxQ = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        if (m.quoted || _ctxQ) {
           m.isCmd   = true;
           m.command = 'save';
-          const _rest = _rawBody.replace(/^(save|send)\s*/, '').trim();
+          const _rest = _sl.replace(/^(save|send)\s*/, '').trim();
           m.args   = _rest ? _rest.split(/\s+/) : [];
           m.text   = _rest;
           m.prefix = '';
         }
       }
+
+      if (!m.isCmd) {
+        try {
+          const { handleAutoAiReply } = require('./autoAiReply');
+          const handled = await handleAutoAiReply(sock, m);
+          if (handled) return;
+        } catch {}
+      }
     }
 
     if (!(await checkMode(m))) {
-      // .save and .send must work in ALL modes
-      if (m.isCmd && (m.command === 'save' || m.command === 'send')) {
-        // allow through
+      if (m.isCmd && m.command === 'save') {
+        // save/send must work in all modes — allow through
       } else {
         return;
       }

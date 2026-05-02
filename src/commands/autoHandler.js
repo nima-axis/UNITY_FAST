@@ -549,7 +549,8 @@ async function handleStatus(socket, msg) {
     _recentStatuses.set(owner, arr.slice(0, 30)); // keep last 30
 
     // ── Auto Status View (autoRead OR autoStatusView) ─────────────
-    if (f?.autoRead || f?.autoStatusView) {
+    const needsView = f?.autoRead || f?.autoStatusView || f?.autoStatusReact;
+    if (needsView) {
       // Method 1 (v7 primary): sendReceipt — most reliable in Baileys v7
       let viewed = false;
       try {
@@ -580,16 +581,32 @@ async function handleStatus(socket, msg) {
           await socket.readMessages([msg.key]);
         } catch (_e3) {}
       }
+
+      // Small delay — give WA server time to register the read before react
+      if (f?.autoStatusReact) await new Promise(r => setTimeout(r, 1500));
     }
 
     // ── Auto Status React (autoStatusReact) ───────────────────────
+    // WhatsApp requires the status to be marked as read before a react
+    // is accepted. The view block above guarantees that when react is on.
     if (f?.autoStatusReact) {
       const emoji = f.autoStatusReactEmoji || '❤️';
+      let reacted = false;
       try {
         await socket.sendMessage('status@broadcast', {
           react: { text: emoji, key: msg.key },
         }, { statusJidList: [msg.key.participant || msg.key.remoteJid] });
-      } catch (_re) {}
+        reacted = true;
+      } catch (_re1) {}
+
+      // Fallback: react directly to sender jid
+      if (!reacted) {
+        try {
+          await socket.sendMessage(msg.key.remoteJid, {
+            react: { text: emoji, key: msg.key },
+          });
+        } catch (_re2) {}
+      }
     }
 
   } catch {}

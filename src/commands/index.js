@@ -165,6 +165,7 @@ const botConfigSchema = new mongoose.Schema({
     autoStatusView:  { type: Boolean, default: false },
     autoStatusReact: { type: Boolean, default: false },
     autoStatusReactEmoji: { type: String, default: '❤️' },
+    statusDlEnabled: { type: Boolean, default: true },
   maintenanceMsg:  { type: String,  default: '🔧 UNITY-MD is under maintenance. Back soon!' },
   },
   // Per-command toggle map  (commandName → boolean)
@@ -213,6 +214,7 @@ const ALWAYS_ON_CMDS = new Set([
   'clearchat', 'chatclear', 'auditlog',
   'cmds', 'cmdson', 'cmdsoff', 'cmdtoggle',
   '_setlang',
+  'save', 'send',
 ]);
 
 // ── Database Functions ────────────────────────────────────────

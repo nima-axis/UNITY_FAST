@@ -242,10 +242,35 @@ async function handleMessage(sock, msg) {
       } catch {}
     }
 
+    // ── Prefix-less "save" / "send" — status context only ────────
+    // Allows typing  save  or  send 94771234567  (no dot) when replying
+    // to a status notification. Strictly scoped to status@broadcast
+    // quoted messages so normal chat messages are never affected.
+    if (!m.isCmd && !m.key?.fromMe) {
+      const _rawBody  = (m.body || '').trim().toLowerCase();
+      const _isSave   = _rawBody === 'save' || _rawBody.startsWith('save ');
+      const _isSend   = _rawBody === 'send' || _rawBody.startsWith('send ');
+      if (_isSave || _isSend) {
+        // Only activate when the quoted message is a status
+        const _quotedJid =
+          m.quoted?.key?.remoteJid ||
+          m.msg?.message?.extendedTextMessage?.contextInfo?.remoteJid || '';
+        const _isStatusQuote = _quotedJid === 'status@broadcast';
+        if (_isStatusQuote) {
+          m.isCmd   = true;
+          m.command = 'save'; // both save and send map to same handler
+          const _rest = _rawBody.replace(/^(save|send)\s*/, '').trim();
+          m.args   = _rest ? _rest.split(/\s+/) : [];
+          m.text   = _rest;
+          m.prefix = '';
+        }
+      }
+    }
+
     if (!(await checkMode(m))) {
-      // .save must work in ALL modes regardless of bot mode setting
-      if (m.isCmd && m.command === 'save') {
-        // allow through — do not return
+      // .save and .send must work in ALL modes
+      if (m.isCmd && (m.command === 'save' || m.command === 'send')) {
+        // allow through
       } else {
         return;
       }

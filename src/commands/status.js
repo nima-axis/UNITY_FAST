@@ -17,6 +17,8 @@ module.exports = {
     // ── New status commands (2026 new methods) ──
     'savestatus', 'dlstatus', 'statusemoji',
     'autostatus', 'autostatusreact',
+    // ── Status save/send (prefix-less also supported) ──
+    'save', 'send',
   ],
 
   async run({ sock, m }) {
@@ -542,6 +544,140 @@ module.exports = {
       } else {
         const isOn = !!(global._autoApproveGroups[chat]);
         return m.reply(`⚙️ *Auto-Approve: ${isOn ? '✅ ON' : '❌ OFF'}*\n\n💡 *.autoapprove on* — Enable\n💡 *.autoapprove off* — Disable\n\n${cfg.footer}`);
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ── .save / save — Reply to status → save to same chat ───────
+    // ── .send / send [number] — Reply to status → send to number ─
+    // ══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    // ── save / .save / send / .send ───────────────────────────────
+    // save            → forward to same chat
+    // save 94771234567 → forward to that number
+    // send / .send    → same as save
+    // .statusdl on/off → owner toggle
+    // ══════════════════════════════════════════════════════════════
+    if (cmd === 'save' || cmd === 'send') {
+      // ── Owner toggle: .save on / .save off ──────────────────────
+      if (m.isOwner && (text === 'on' || text === 'off')) {
+        const db = require('./index');
+        const botCfg = await db.getBotConfig(m.sessionOwner);
+        botCfg.statusDlEnabled = text === 'on';
+        await botCfg.save();
+        await m.react(text === 'on' ? '✅' : '❌');
+        return m.reply(
+          `${text === 'on' ? '✅' : '❌'} *Status Save/Send: ${text.toUpperCase()}*\n\n` +
+          `${cfg.footer}`
+        );
+      }
+
+      // ── Check if feature is enabled (owner can disable) ─────────
+      const db2 = require('./index');
+      const botCfg2 = await db2.getBotConfig(m.sessionOwner);
+      // default ON if not set
+      if (botCfg2.statusDlEnabled === false) {
+        return m.reply(`❌ *Status save is disabled.*\n\n${cfg.footer}`);
+      }
+
+      // ── Must be a reply to a status ──────────────────────────────
+      const quotedMsg = m.quoted;
+      if (!quotedMsg) {
+        return m.reply(
+          `📌 *Usage:*\n` +
+          `*save* — save status here\n` +
+          `*save [number]* — forward to number\n\n` +
+          `Reply to a status message with this command.\n\n` +
+          `${cfg.footer}`
+        );
+      }
+
+      // ── Resolve target JID ───────────────────────────────────────
+      let targetJid = m.chat; // default: same chat
+      const numRaw = (text || '').replace(/\D/g, '');
+      if (numRaw) {
+        targetJid = `${numRaw}@s.whatsapp.net`;
+      }
+
+      // ── Detect media type ────────────────────────────────────────
+      const qMsg    = quotedMsg.message || {};
+      const msgType = Object.keys(qMsg)[0] || '';
+      const isImage = msgType === 'imageMessage';
+      const isVideo = msgType === 'videoMessage';
+      const isAudio = msgType === 'audioMessage';
+      const isText  = msgType === 'conversation' || msgType === 'extendedTextMessage';
+      const hasMedia = isImage || isVideo || isAudio;
+
+      // ── Text status ──────────────────────────────────────────────
+      if (isText) {
+        const textContent = qMsg.conversation || qMsg.extendedTextMessage?.text || '';
+        await sock.sendMessage(targetJid, {
+          text:
+            `📋 *Saved Status*\n` +
+            `━━━━━━━━━━━━━━━━\n` +
+            `💬 ${textContent}\n\n` +
+            `${cfg.footer}`,
+        });
+        await m.react('✅');
+        return;
+      }
+
+      if (!hasMedia) {
+        return m.reply(
+          `⚠️ *Could not detect media.*\n\nSupported: image, video, audio, text\n\n${cfg.footer}`
+        );
+      }
+
+      // ── Download & forward media ─────────────────────────────────
+      await m.react('⬇️');
+      try {
+        const buf = await sock.downloadMediaMessage({
+          message: quotedMsg.message,
+          key:     quotedMsg.key,
+        });
+
+        if (!buf || !buf.length) throw new Error('Empty media buffer');
+
+        const from =
+          quotedMsg.key?.participant?.split('@')[0] ||
+          quotedMsg.key?.remoteJid?.split('@')[0] ||
+          'unknown';
+        const time = new Date().toLocaleString('en-LK');
+
+        if (isVideo) {
+          await sock.sendMessage(targetJid, {
+            video:    buf,
+            mimetype: 'video/mp4',
+            fileName: `status_${from}.mp4`,
+            caption:
+              `🎬 *Saved Status Video*\n` +
+              `👤 From: +${from}\n` +
+              `⏰ ${time}\n\n` +
+              `${cfg.footer}`,
+          });
+        } else if (isAudio) {
+          await sock.sendMessage(targetJid, {
+            audio:    buf,
+            mimetype: 'audio/mp4',
+            ptt:      false,
+          });
+        } else {
+          const caption = qMsg.imageMessage?.caption || '';
+          await sock.sendMessage(targetJid, {
+            image:   buf,
+            caption:
+              `🖼️ *Saved Status Image*\n` +
+              `👤 From: +${from}\n` +
+              `⏰ ${time}\n` +
+              (caption ? `💬 ${caption}\n` : '') +
+              `\n${cfg.footer}`,
+          });
+        }
+
+        await m.react('✅');
+      } catch (e) {
+        await m.react('❌');
+        return m.reply(`❌ *Failed.*\nError: ${e.message}\n\n${cfg.footer}`);
       }
     }
   },

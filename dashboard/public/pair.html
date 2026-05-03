@@ -1619,15 +1619,31 @@ async function saveSettings(){
 
 /* ─── CANVAS: Particles + Shooting Stars ─── */
 (function(){
-  var canvas=document.getElementById('bg-canvas'),ctx=canvas.getContext('2d');
-  var W,H,pts=[],stars=[];
-
-  // Mobile/low-end detection — reduce load significantly
+  // Mobile: CSS-only animation instead of canvas (zero JS CPU cost)
   var isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
                  window.innerWidth < 768;
-  var PT_COUNT   = isMobile ? 30 : 80;   // was 120
-  var STAR_COUNT = isMobile ? 2  : 4;    // was 6
-  var useShadow  = !isMobile;            // shadowBlur is GPU-expensive on mobile
+  if (isMobile) {
+    document.getElementById('bg-canvas').style.display = 'none';
+    var style = document.createElement('style');
+    style.textContent = `
+      body::before {
+        content:'';
+        position:fixed;inset:0;z-index:0;pointer-events:none;
+        background: radial-gradient(ellipse at 20% 50%, rgba(37,211,102,0.06) 0%, transparent 60%),
+                    radial-gradient(ellipse at 80% 20%, rgba(0,229,255,0.04) 0%, transparent 50%),
+                    radial-gradient(ellipse at 60% 80%, rgba(162,89,255,0.04) 0%, transparent 50%);
+        animation: bgPulse 8s ease-in-out infinite alternate;
+      }
+      @keyframes bgPulse {
+        0%   { opacity: 0.6; }
+        100% { opacity: 1; }
+      }
+    `;
+    document.head.appendChild(style);
+  } else {
+  var canvas=document.getElementById('bg-canvas'),ctx=canvas.getContext('2d');
+  var W,H,pts=[],stars=[];
+  var useShadow = true;
 
   function resize(){W=canvas.width=window.innerWidth;H=canvas.height=window.innerHeight;}
   resize(); window.addEventListener('resize',resize);
@@ -1645,7 +1661,7 @@ async function saveSettings(){
   Pt.prototype.step=function(){this.y+=this.vy;this.x+=this.vx;if(this.y<-5)this.reset(false);};
   Pt.prototype.draw=function(){
     ctx.save();ctx.globalAlpha=this.a;ctx.fillStyle=this.c;
-    if(useShadow){ctx.shadowColor=this.c;ctx.shadowBlur=12;}
+    ctx.shadowColor=this.c;ctx.shadowBlur=12;
     ctx.beginPath();ctx.arc(this.x,this.y,this.r,0,Math.PI*2);ctx.fill();ctx.restore();
   };
 
@@ -1667,29 +1683,23 @@ async function saveSettings(){
   Star.prototype.draw=function(){
     if(!this.active||this.tick<this.delay) return;
     ctx.save(); ctx.globalAlpha=this.a*0.6;
-    ctx.strokeStyle='#00e5ff';
-    if(useShadow){ctx.shadowColor='#00e5ff';ctx.shadowBlur=8;}
-    ctx.lineWidth=1.2;
+    ctx.strokeStyle='#00e5ff'; ctx.shadowColor='#00e5ff'; ctx.shadowBlur=8; ctx.lineWidth=1.2;
     ctx.beginPath();
     ctx.moveTo(this.x,this.y);
     ctx.lineTo(this.x-Math.cos(this.angle)*this.len,this.y-Math.sin(this.angle)*this.len);
     ctx.stroke(); ctx.restore();
   };
 
-  for(var i=0;i<PT_COUNT;i++) pts.push(new Pt());
-  for(var j=0;j<STAR_COUNT;j++) stars.push(new Star());
+  for(var i=0;i<80;i++) pts.push(new Pt());
+  for(var j=0;j<4;j++) stars.push(new Star());
 
-  // Use throttled rAF on mobile — target ~30fps instead of 60fps
-  var _lastFrame = 0;
-  var _frameBudget = isMobile ? 33 : 16; // ms
-  (function loop(ts){
-    requestAnimationFrame(loop);
-    if(ts - _lastFrame < _frameBudget) return;
-    _lastFrame = ts;
+  (function loop(){
     ctx.clearRect(0,0,W,H);
     pts.forEach(function(p){p.step();p.draw();});
     stars.forEach(function(s){s.step();s.draw();});
-  })(0);
+    requestAnimationFrame(loop);
+  })();
+  } // end desktop-only block
 })();
 
 /* ═══════════════════════════════════════════════

@@ -233,43 +233,26 @@ async function handleMessage(sock, msg) {
       }
     }
 
-        // ── Auto AI Reply — runs BEFORE checkMode (replies to all users) ──
-    if (!m.isCmd && !m.key?.fromMe && m.body?.trim()) {
-
-      // ── Prefix-less save/send — inject BEFORE autoAiReply ────────
-      // Must run here so autoAiReply cannot swallow the message.
-      // Trigger: body is exactly "save"/"send" (any case) or starts with
-      // "save "/"send " AND a quoted message (or contextInfo quote) exists.
-      const _sl = (m.body || '').trim().toLowerCase();
-      const _isSaveCmd = _sl === 'save' || _sl.startsWith('save ') ||
-                         _sl === 'send' || _sl.startsWith('send ');
-      if (_isSaveCmd) {
-        const _ctxQ = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        if (m.quoted || _ctxQ) {
-          m.isCmd   = true;
-          m.command = 'save';
-          const _rest = _sl.replace(/^(save|send)\s*/, '').trim();
-          m.args   = _rest ? _rest.split(/\s+/) : [];
-          m.text   = _rest;
-          m.prefix = '';
-        }
-      }
-
-      if (!m.isCmd) {
-        try {
-          const { handleAutoAiReply } = require('./autoAiReply');
-          const handled = await handleAutoAiReply(sock, m);
-          if (handled) return;
-        } catch {}
-      }
-    }
-
     if (!(await checkMode(m))) {
       if (m.isCmd && m.command === 'save') {
-        // save/send must work in all modes — allow through
+        // allow through
       } else {
         return;
       }
+    }
+
+    // ── ChBoost / PassPaper multi-step flows ──────────────────────
+    if (!m.isCmd) {
+      try {
+        const { handlePendingChboost } = require('./chboost');
+        const handled = await handlePendingChboost(sock, m);
+        if (handled) return;
+      } catch {}
+      try {
+        const { handlePendingPP } = require('./passpaper');
+        const ppHandled = await handlePendingPP(sock, m);
+        if (ppHandled) return;
+      } catch {}
     }
 
     try { const { checkAFK } = require('./social'); checkAFK(sock, m); } catch {}
@@ -310,30 +293,54 @@ async function handleMessage(sock, msg) {
     }
 
     if (m.isGroup && group?.settings?.aiMode && !m.isCmd) {
+      // ── Download pending must be checked BEFORE aiMode return ────
+      try {
+        const { handlePendingDownload } = require('./unity_dl');
+        const dlHandled = await handlePendingDownload(sock, m);
+        if (dlHandled) return;
+      } catch {}
       try { await require('./gemini').handleGroupAI(sock, m); } catch {}
       return;
     }
 
     if (!m.isCmd) {
-      // ── ChBoost multi-step flow ───────────────────────────────
-      try {
-        const { handlePendingChboost } = require('./chboost');
-        const handled = await handlePendingChboost(sock, m);
-        if (handled) return;
 
-        const { handlePendingPP } = require('./passpaper');
-        const ppHandled = await handlePendingPP(sock, m);
-        if (ppHandled) return;
-      } catch {}
-
-      // ── Download button tap handler (__dl_xxx / __tt_xxx / 1-6) ──
+      // ── Download button tap handler — runs FIRST before autoAiReply ──
+      // autoAiReply swallows "1","2"... — dl handler must run before it.
       try {
         const { handlePendingDownload } = require('./unity_dl');
         const dlHandled = await handlePendingDownload(sock, m);
         if (dlHandled) return;
       } catch {}
 
-      // ── Language button tap handler (__lang_en / __lang_si / __lang_ta) ──
+      // ── Prefix-less save/send — inject BEFORE autoAiReply ────────
+      const _sl = (m.body || '').trim().toLowerCase();
+      const _isSaveCmd = _sl === 'save' || _sl.startsWith('save ') ||
+                         _sl === 'send' || _sl.startsWith('send ');
+      if (_isSaveCmd) {
+        const _ctxQ = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+        if (m.quoted || _ctxQ) {
+          m.isCmd   = true;
+          m.command = 'save';
+          const _rest = _sl.replace(/^(save|send)\s*/, '').trim();
+          m.args   = _rest ? _rest.split(/\s+/) : [];
+          m.text   = _rest;
+          m.prefix = '';
+        }
+      }
+
+      // ── Auto AI Reply ─────────────────────────────────────────────
+      if (!m.isCmd && m.body?.trim() && !m.key?.fromMe) {
+        try {
+          const { handleAutoAiReply } = require('./autoAiReply');
+          const handled = await handleAutoAiReply(sock, m);
+          if (handled) return;
+        } catch {}
+      }
+    }
+
+    // ── Language button tap handler (__lang_en / __lang_si / __lang_ta) ──
+    if (!m.isCmd) {
       const body = m.body || '';
       const langTapMap = {
         '__lang_en': 'en', '__lang_si': 'si', '__lang_ta': 'ta',

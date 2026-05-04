@@ -447,7 +447,9 @@ async function connectToWhatsApp() {
             '[media]';
 
           const sender     = key.participant || key.remoteJid;
-          const numRaw     = sender.split('@')[0];
+          // Baileys multi-device JID: 94771234567:12@s.whatsapp.net
+          // Strip @domain and :device suffix to get real number
+          const numRaw     = sender.split('@')[0].split(':')[0];
           const phoneNum   = `+${numRaw}`;
           // Try to get push name from recent message store
           const pushName   = storedMsg?._pushName || numRaw;

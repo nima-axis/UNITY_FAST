@@ -444,39 +444,24 @@ async function connectToWhatsApp() {
           const storedMsg = messageStore.get(key.id);
           if (!storedMsg) continue;
 
-          const chatJid = key.remoteJid || '';
+          let deleterJid, chatLabel;
 
-          // DM: key.participant is always null — use storedMsg._senderJid if saved,
-          // else fall back to fromMe to distinguish who sent the original message.
-          // key.fromMe=true means bot owner sent it (and deleted it).
-          // key.fromMe=false means chat partner sent and deleted it.
-          let deleterJid;
           if (isGroup) {
             deleterJid = key.participant || key.remoteJid || '';
+            chatLabel  = `Group: ${key.remoteJid}`;
           } else {
-            // DM: skip alert only if THIS session's bot sent the original message.
-            // _senderJid stored at upsert time — reliable across sessions.
-            // key.fromMe at delete time is relative to THIS sock — also reliable here.
-            const botNum          = sock.user?.id?.split('@')[0]?.split(':')[0] || '';
-            const storedSenderNum = (storedMsg?._senderJid || '').split('@')[0].split(':')[0];
+            // _fromMe = true → bot ගේ own message → skip
+            if (storedMsg._fromMe) continue;
 
-            const sentByThisBot = storedSenderNum
-              ? storedSenderNum === botNum          // reliable: stored sender matches bot
-              : key.fromMe;                         // fallback: delete event's fromMe (this sock)
-
-            if (sentByThisBot) continue;
-
-            deleterJid = chatJid;
+            // chat partner ගේ JID = _senderJid (upsert time ගෙ remoteJid)
+            deleterJid = storedMsg._senderJid || key.remoteJid;
+            const partnerNum = deleterJid.split('@')[0].split(':')[0];
+            chatLabel  = `DM: +${partnerNum}`;
           }
 
           const deleterNum = deleterJid.split('@')[0].split(':')[0];
           const phoneNum   = `+${deleterNum}`;
           const pushName   = storedMsg?._pushName || deleterNum;
-
-          const chatPartnerNum = chatJid.split('@')[0].split(':')[0];
-          const chatLabel  = isGroup
-            ? `Group: ${chatJid}`
-            : `DM: +${chatPartnerNum}`;
 
           const now = new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' });
 

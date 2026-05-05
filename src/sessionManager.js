@@ -777,7 +777,9 @@ async function startSession(userId, onUpdate) {
                   if (isGroupChat) {
                     deleterJid = msg.key.participant || chatJid;
                   } else {
-                    deleterJid = proto.key.fromMe ? (sock.user?.id || chatJid) : chatJid;
+                    // Skip alert if bot owner deleted their own message
+                    if (proto.key.fromMe) continue;
+                    deleterJid = chatJid;
                   }
 
                   const deleterNum = deleterJid.split('@')[0].split(':')[0];

@@ -805,9 +805,18 @@ async function startSession(userId, onUpdate) {
                     const originalFromMe = storedMsg ? storedMsg._fromMe : proto.key.fromMe;
                     if (originalFromMe) continue;
 
-                    // _remoteJid = upsert time ගෙ real phone JID (94761234567@s.whatsapp.net)
-                    // proto.key.remoteJid = @lid විය හැකි — avoid
-                    deleterJid = storedMsg?._remoteJid || storedMsg?._senderJid || proto.key.remoteJid || '';
+                    // Debug: log all available JIDs to find correct one
+                    console.log('[ANTIDELETE DEBUG]', JSON.stringify({
+                      'msg.key.remoteJid': msg.key.remoteJid,
+                      'proto.key.remoteJid': proto.key.remoteJid,
+                      'storedMsg._remoteJid': storedMsg?._remoteJid,
+                      'storedMsg._senderJid': storedMsg?._senderJid,
+                      'botJid': botJid,
+                      'storedMsg null': !storedMsg,
+                    }));
+                    // chatJid (msg.key.remoteJid) = DM delete notification ගෙ remoteJid
+                    // storedMsg null නම් → chatJid use කරන්නම ඕන
+                    deleterJid = storedMsg?._remoteJid || storedMsg?._senderJid || chatJid || proto.key.remoteJid || '';
                     deleterJid = deleterJid.replace(/:\d+@/, '@');
                     const partnerNum = deleterJid.split('@')[0];
                     chatLabel  = `DM: +${partnerNum}`;

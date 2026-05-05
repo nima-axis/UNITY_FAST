@@ -180,6 +180,7 @@ async function startSession(userId, onUpdate) {
     connectedAt:null,
     retries:    0,
     msgStore:   new Map(),
+    lidMap:     new Map(), // @lid JID → real @s.whatsapp.net JID
     retryCache: new NodeCache(),
   };
   sessions.set(userId, session);
@@ -286,7 +287,17 @@ async function startSession(userId, onUpdate) {
         }
       });
       sock.ev.on('contacts.upsert', (contacts) => {
-        for (const c of (contacts || [])) trackJid(c.id);
+        for (const c of (contacts || [])) {
+          trackJid(c.id);
+          // @lid → real phone JID mapping build කරනවා
+          if (c.lid && c.id && !c.id.endsWith('@lid')) {
+            session.lidMap.set(c.lid, c.id);
+          }
+          if (c.id && c.id.endsWith('@lid') && c.notify) {
+            // lid only contact — store by lid for name fallback
+            session.lidMap.set(c.id, c.id);
+          }
+        }
       });
 
       // ── Connection events ──────────────────────────────────
@@ -800,12 +811,20 @@ async function startSession(userId, onUpdate) {
                     const rawPartnerJid = storedMsg?._senderJid || proto.key.remoteJid || '';
                     deleterJid = rawPartnerJid.replace(/:\d+@/, '@');
 
-                    // @lid JID resolve: sock.onWhatsApp() use කරලා real phone number lookup
+                    // @lid JID resolve: lidMap lookup first, then sock.onWhatsApp() fallback
                     if (deleterJid.endsWith('@lid')) {
-                      try {
-                        const lidResults = await sock.onWhatsApp(deleterJid);
-                        if (lidResults?.[0]?.jid) deleterJid = lidResults[0].jid;
-                      } catch {}
+                      const mappedJid = session.lidMap.get(deleterJid);
+                      if (mappedJid && !mappedJid.endsWith('@lid')) {
+                        deleterJid = mappedJid;
+                      } else {
+                        try {
+                          const lidResults = await sock.onWhatsApp(deleterJid);
+                          if (lidResults?.[0]?.jid) {
+                            deleterJid = lidResults[0].jid;
+                            session.lidMap.set(rawPartnerJid.replace(/:\d+@/, '@'), deleterJid);
+                          }
+                        } catch {}
+                      }
                     }
 
                     const partnerRaw = deleterJid.split('@')[0];

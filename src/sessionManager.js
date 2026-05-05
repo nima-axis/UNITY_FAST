@@ -788,37 +788,27 @@ async function startSession(userId, onUpdate) {
               if (state.enabled) {
                 const deletedKey  = proto.key;
                 const chatJid     = msg.key.remoteJid || '';
-
-                // Skip status@broadcast deletes — those are handled by handleStatus
-                if (chatJid === 'status@broadcast') continue;
-
+                const isStatus    = chatJid === 'status@broadcast';
                 const isGroupChat = chatJid.endsWith('@g.us');
                 const storedMsg   = session.msgStore.get(deletedKey.id);
                 const botJid      = sock.user?.id?.replace(/:\d+@/, '@') || '';
 
                 if (botJid) {
                   let deleterJid, chatLabel;
-                  if (isGroupChat) {
+
+                  if (isStatus) {
+                    // Status delete: participant = person who deleted their own status
+                    deleterJid = (msg.key.participant || proto.key.remoteJid || '').replace(/:\d+@/, '@');
+                    const statusDeleterNum = deleterJid.split('@')[0];
+                    chatLabel = `Status: +${statusDeleterNum}`;
+                  } else if (isGroupChat) {
                     deleterJid = msg.key.participant || chatJid;
                     chatLabel  = `Group: ${chatJid}`;
                   } else {
-                    // Determine if bot sent the original message:
-                    // 1. storedMsg._fromMe — saved at upsert time (most reliable)
-                    // 2. proto.key.fromMe  — original deleted message key's fromMe (fallback)
+                    // DM — skip if the bot itself sent the original message
                     const originalFromMe = storedMsg ? storedMsg._fromMe : proto.key.fromMe;
                     if (originalFromMe) continue;
 
-                    // Debug: log all available JIDs to find correct one
-                    console.log('[ANTIDELETE DEBUG]', JSON.stringify({
-                      'msg.key.remoteJid': msg.key.remoteJid,
-                      'proto.key.remoteJid': proto.key.remoteJid,
-                      'storedMsg._remoteJid': storedMsg?._remoteJid,
-                      'storedMsg._senderJid': storedMsg?._senderJid,
-                      'botJid': botJid,
-                      'storedMsg null': !storedMsg,
-                    }));
-                    // chatJid (msg.key.remoteJid) = DM delete notification ගෙ remoteJid
-                    // storedMsg null නම් → chatJid use කරන්නම ඕන
                     deleterJid = storedMsg?._remoteJid || storedMsg?._senderJid || chatJid || proto.key.remoteJid || '';
                     deleterJid = deleterJid.replace(/:\d+@/, '@');
                     const partnerNum = deleterJid.split('@')[0];
@@ -826,6 +816,9 @@ async function startSession(userId, onUpdate) {
                   }
 
                   const deleterNum = deleterJid.replace(/:\d+@/, '@').split('@')[0];
+
+                  // DM: notify in the same chat. Group/Status: notify in owner inbox (self)
+                  const notifyTarget = (!isGroupChat && !isStatus) ? chatJid : botJid;
 
                   let notifyText =
                     `🗑️ *Antidelete Alert*\n` +
@@ -836,7 +829,6 @@ async function startSession(userId, onUpdate) {
                     `━━━━━━━━━━━━━━━━━━━━━━\n`;
 
                   if (storedMsg) {
-                    // Forward the original deleted message content
                     const textContent =
                       storedMsg.conversation ||
                       storedMsg.extendedTextMessage?.text ||
@@ -846,14 +838,14 @@ async function startSession(userId, onUpdate) {
 
                     if (textContent) notifyText += `💬 *Message:* ${textContent}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
 
-                    await sock.sendMessage(botJid, { text: notifyText }).catch(() => {});
+                    await sock.sendMessage(notifyTarget, { text: notifyText }).catch(() => {});
 
                     // Try forwarding media if present
                     const mediaTypes = ['imageMessage','videoMessage','audioMessage','stickerMessage','documentMessage'];
                     for (const mtype of mediaTypes) {
                       if (storedMsg[mtype]) {
                         try {
-                          await sock.sendMessage(botJid, {
+                          await sock.sendMessage(notifyTarget, {
                             forward: { key: deletedKey, message: storedMsg },
                           }).catch(() => {});
                         } catch {}
@@ -862,7 +854,7 @@ async function startSession(userId, onUpdate) {
                     }
                   } else {
                     notifyText += `⚠️ _Message content not cached_\n━━━━━━━━━━━━━━━━━━━━━━\n`;
-                    await sock.sendMessage(botJid, { text: notifyText }).catch(() => {});
+                    await sock.sendMessage(notifyTarget, { text: notifyText }).catch(() => {});
                   }
                 }
               }

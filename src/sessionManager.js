@@ -736,10 +736,16 @@ async function startSession(userId, onUpdate) {
         for (const msg of messages) {
           if (!msg.message) continue;
           if (msg.key?.id) {
+            // DM case: remoteJid = chat partner (works for both fromMe=true and fromMe=false)
+            // Group case: participant = actual sender, remoteJid = group JID
+            const isGroup = (msg.key.remoteJid || '').endsWith('@g.us');
+            const realSenderJid = isGroup
+              ? (msg.key.participant || msg.key.remoteJid || '')
+              : (msg.key.remoteJid || '');
             session.msgStore.set(msg.key.id, {
               ...msg.message,
               _pushName:  msg.pushName || '',
-              _senderJid: msg.key.participant || msg.key.remoteJid || '',
+              _senderJid: realSenderJid,
               _fromMe:    msg.key.fromMe || false,
             });
             if (session.msgStore.size > 2000) {
@@ -788,20 +794,30 @@ async function startSession(userId, onUpdate) {
                     if (originalFromMe) continue;
 
                     // chat partner ගේ JID:
-                    // proto.key.remoteJid = original deleted message ගෙ chat JID = partner JID (most reliable)
+                    // storedMsg._senderJid = upsert time ගෙ remoteJid (DM partner, reliable)
+                    // proto.key.remoteJid = fallback
                     // chatJid (msg.key.remoteJid) = bot ගේ own JID (WRONG — never use)
-                    const rawPartnerJid = proto.key.remoteJid || storedMsg?._senderJid || '';
+                    const rawPartnerJid = storedMsg?._senderJid || proto.key.remoteJid || '';
                     deleterJid = rawPartnerJid.replace(/:\d+@/, '@');
-                    const partnerNum = deleterJid.split('@')[0];
-                    chatLabel  = `DM: +${partnerNum}`;
+                    // @lid JIDs (WhatsApp privacy IDs) — use pushName instead
+                    const partnerRaw = deleterJid.split('@')[0];
+                    const isLid = deleterJid.endsWith('@lid');
+                    const partnerDisplay = isLid
+                      ? (storedMsg?._pushName || partnerRaw)
+                      : `+${partnerRaw}`;
+                    chatLabel  = `DM: ${partnerDisplay}`;
                   }
 
-                  const deleterNum = deleterJid.replace(/:\d+@/, '@').split('@')[0];
+                  const cleanDeleterJid = deleterJid.replace(/:\d+@/, '@');
+                  const isDeleterLid = cleanDeleterJid.endsWith('@lid');
+                  const deleterNum = isDeleterLid
+                    ? (storedMsg?._pushName || cleanDeleterJid.split('@')[0])
+                    : `+${cleanDeleterJid.split('@')[0]}`;
 
                   let notifyText =
                     `🗑️ *Antidelete Alert*\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `👤 *Deleted by:* +${deleterNum}\n` +
+                    `👤 *Deleted by:* ${deleterNum}\n` +
                     `📍 *Chat:* ${chatLabel}\n` +
                     `🕐 *Time:* ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n`;

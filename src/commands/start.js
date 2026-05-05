@@ -432,55 +432,74 @@ async function connectToWhatsApp() {
           } else {
             // DM: check owner-level antidelete (session config)
             const { readJson } = require('./src/commands/fileStore');
-            const state = readJson('antidelete.json', { enabled: false }, sock.sessionOwner);
+            const state = readJson('antidelete.json', { enabled: true }, sock.sessionOwner);
             if (!state.enabled) continue;
           }
 
           const storedMsg = messageStore.get(key.id);
           if (!storedMsg) continue;
 
-          const body =
-            storedMsg?.conversation ||
-            storedMsg?.extendedTextMessage?.text ||
-            storedMsg?.imageMessage?.caption ||
-            storedMsg?.videoMessage?.caption ||
-            '[media]';
+          // ── Same logic as sessionManager.js status antidelete ──
+          const deleterJid = key.participant || key.remoteJid || '';
+          const chatJid    = key.remoteJid || '';
 
-          const sender     = key.participant || key.remoteJid;
-          // Baileys multi-device JID: 94771234567:12@s.whatsapp.net
-          // Strip @domain and :device suffix to get real number
-          const numRaw     = sender.split('@')[0].split(':')[0];
-          const phoneNum   = `+${numRaw}`;
-          // Try to get push name from recent message store
-          const pushName   = storedMsg?._pushName || numRaw;
+          const deleterNum = deleterJid.split('@')[0].split(':')[0];
+          const phoneNum   = `+${deleterNum}`;
+          const pushName   = storedMsg?._pushName || deleterNum;
 
           const chatLabel  = isGroup
-            ? `Group`
-            : `DM: ${phoneNum}`;
+            ? `Group: ${chatJid}`
+            : `DM: +${chatJid.split('@')[0].split(':')[0]}`;
 
-          const now = new Date().toLocaleString('en-LK');
+          const now = new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' });
 
-          const alertText =
+          const textContent =
+            storedMsg.conversation ||
+            storedMsg.extendedTextMessage?.text ||
+            storedMsg.imageMessage?.caption ||
+            storedMsg.videoMessage?.caption ||
+            '';
+
+          let alertText =
             `🗑️ *Antidelete Alert*\n` +
             `━━━━━━━━━━━━━━━━━━━━━━\n` +
             `👤 *Deleted by:* ${phoneNum}\n` +
             `📛 *Name:* ${pushName}\n` +
             `📍 *Chat:* ${chatLabel}\n` +
             `🕐 *Time:* ${now}\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `💬 *Message:* ${body}\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-            `${cfg.footer}`;
+            `━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+          if (textContent) {
+            alertText += `💬 *Message:* ${textContent}\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+          } else {
+            alertText += `⚠️ _Message content not cached_\n━━━━━━━━━━━━━━━━━━━━━━\n`;
+          }
+
+          alertText += `\n${cfg.footer}`;
+
+          const botJid = sock.user?.id?.replace(/:\d+@/, '@') || '';
+          const ownerJid = `${cfg.ownerNumbers?.[0]?.replace(/\D/g, '')}@s.whatsapp.net`;
+          const targetJid = isGroup ? jid : (ownerJid || botJid);
 
           if (isGroup) {
-            await sock.sendMessage(jid, {
-              text: alertText,
-              mentions: [sender],
-            });
+            await sock.sendMessage(targetJid, { text: alertText, mentions: [deleterJid] });
           } else {
-            // DM — send alert to owner
-            const ownerJid = `${cfg.ownerNumbers?.[0]?.replace(/\D/g, '')}@s.whatsapp.net`;
-            await sock.sendMessage(ownerJid || jid, { text: alertText });
+            await sock.sendMessage(targetJid, { text: alertText }).catch(() => {});
+          }
+
+          // Try forwarding media if present
+          if (storedMsg) {
+            const mediaTypes = ['imageMessage','videoMessage','audioMessage','stickerMessage','documentMessage'];
+            for (const mtype of mediaTypes) {
+              if (storedMsg[mtype]) {
+                try {
+                  await sock.sendMessage(targetJid, {
+                    forward: { key, message: storedMsg },
+                  }).catch(() => {});
+                } catch {}
+                break;
+              }
+            }
           }
         } catch (e) {}
       }

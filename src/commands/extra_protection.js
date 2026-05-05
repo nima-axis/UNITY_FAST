@@ -91,7 +91,7 @@ module.exports = {
     // ── ANTIDELETE ────────────────────────────────────────────
     if (cmd === 'antidelete') {
       if (!m.isOwner && !m.isGroupAdmin) return m.reply(`${tr('err_admins_only')}\n\n${cfg.footer}`);
-      const state = readJson('antidelete.json', { enabled: false }, sid);
+      const state = readJson('antidelete.json', { enabled: true }, sid);
       const sub = text?.toLowerCase();
       if (!sub || !['on', 'off', 'status'].includes(sub)) {
         return sendButtons(sock, chat, {

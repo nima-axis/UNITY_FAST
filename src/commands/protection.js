@@ -94,7 +94,7 @@ module.exports = {
     // ── ANTIDELETE ────────────────────────────────────────────
     if (cmd === 'antidelete') {
       if (!isAdmin && !m.isOwner) return m.reply(`${tr('err_admins_only')}\n\n${cfg.footer}`);
-      const state = readJson('antidelete.json', { enabled: false }, sid);
+      const state = readJson('antidelete.json', { enabled: true }, sid);
       const sub = text?.toLowerCase();
       if (!sub || sub === 'status') return sendButtons(sock, chat, { text: `🗑️ *ANTIDELETE*\n\nStatus: *${state.enabled ? 'ON ✅' : 'OFF ❌'}*\n\n${cfg.footer}`, footer: cfg.footer, buttons: [{ label: state.enabled ? '🔴 Turn OFF' : '🟢 Turn ON', id: `.antidelete ${state.enabled ? 'off' : 'on'}` }], quoted: msg });
       const enable = sub === 'on'; writeJson('antidelete.json', { enabled: enable }, sid);

@@ -761,19 +761,28 @@ async function startSession(userId, onUpdate) {
 
               if (state.enabled) {
                 const deletedKey  = proto.key;
-                const deleterJid  = msg.key.participant || msg.key.remoteJid || '';
                 const chatJid     = msg.key.remoteJid || '';
 
                 // Skip status@broadcast deletes — those are handled by handleStatus
                 if (chatJid === 'status@broadcast') continue;
 
+                const isGroupChat = chatJid.endsWith('@g.us');
                 const storedMsg   = session.msgStore.get(deletedKey.id);
                 const botJid      = sock.user?.id?.replace(/:\d+@/, '@') || '';
 
                 if (botJid) {
+                  // DM: key.participant is always null in Baileys DM events.
+                  // Use proto.key.fromMe to detect who deleted the message.
+                  let deleterJid;
+                  if (isGroupChat) {
+                    deleterJid = msg.key.participant || chatJid;
+                  } else {
+                    deleterJid = proto.key.fromMe ? (sock.user?.id || chatJid) : chatJid;
+                  }
+
                   const deleterNum = deleterJid.split('@')[0].split(':')[0];
                   const chatNum    = chatJid.split('@')[0].split(':')[0];
-                  const chatLabel  = chatJid.endsWith('@g.us') ? `Group: ${chatJid}` : `DM: +${chatNum}`;
+                  const chatLabel  = isGroupChat ? `Group: ${chatJid}` : `DM: +${chatNum}`;
 
                   let notifyText =
                     `🗑️ *Antidelete Alert*\n` +

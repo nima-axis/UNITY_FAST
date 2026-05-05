@@ -452,13 +452,10 @@ async function connectToWhatsApp() {
           if (isGroup) {
             deleterJid = key.participant || key.remoteJid || '';
           } else {
-            if (key.fromMe) {
-              // Bot owner deleted their own message
-              deleterJid = sock.user?.id || chatJid;
-            } else {
-              // Chat partner deleted their message — remoteJid is their JID
-              deleterJid = chatJid;
-            }
+            // Skip alert if bot owner deleted their own message
+            if (key.fromMe) continue;
+            // Chat partner deleted their message — remoteJid is their JID
+            deleterJid = chatJid;
           }
 
           const deleterNum = deleterJid.split('@')[0].split(':')[0];

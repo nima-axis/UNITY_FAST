@@ -755,9 +755,10 @@ async function startSession(userId, onUpdate) {
               : (msg.key.remoteJid || '');
             session.msgStore.set(msg.key.id, {
               ...msg.message,
-              _pushName:  msg.pushName || '',
-              _senderJid: realSenderJid,
-              _fromMe:    msg.key.fromMe || false,
+              _pushName:   msg.pushName || '',
+              _senderJid:  realSenderJid,
+              _remoteJid:  (msg.key.remoteJid || '').replace(/:\d+@/, '@'), // always real phone JID
+              _fromMe:     msg.key.fromMe || false,
             });
             if (session.msgStore.size > 2000) {
               const firstKey = session.msgStore.keys().next().value;
@@ -804,47 +805,20 @@ async function startSession(userId, onUpdate) {
                     const originalFromMe = storedMsg ? storedMsg._fromMe : proto.key.fromMe;
                     if (originalFromMe) continue;
 
-                    // chat partner ගේ JID:
-                    // storedMsg._senderJid = upsert time ගෙ remoteJid (DM partner, reliable)
-                    // proto.key.remoteJid = fallback
-                    // chatJid (msg.key.remoteJid) = bot ගේ own JID (WRONG — never use)
-                    const rawPartnerJid = storedMsg?._senderJid || proto.key.remoteJid || '';
-                    deleterJid = rawPartnerJid.replace(/:\d+@/, '@');
-
-                    // @lid JID resolve: lidMap lookup first, then sock.onWhatsApp() fallback
-                    if (deleterJid.endsWith('@lid')) {
-                      const mappedJid = session.lidMap.get(deleterJid);
-                      if (mappedJid && !mappedJid.endsWith('@lid')) {
-                        deleterJid = mappedJid;
-                      } else {
-                        try {
-                          const lidResults = await sock.onWhatsApp(deleterJid);
-                          if (lidResults?.[0]?.jid) {
-                            deleterJid = lidResults[0].jid;
-                            session.lidMap.set(rawPartnerJid.replace(/:\d+@/, '@'), deleterJid);
-                          }
-                        } catch {}
-                      }
-                    }
-
-                    const partnerRaw = deleterJid.split('@')[0];
-                    const isLid = deleterJid.endsWith('@lid');
-                    const partnerDisplay = isLid
-                      ? (storedMsg?._pushName || partnerRaw)
-                      : `+${partnerRaw}`;
-                    chatLabel  = `DM: ${partnerDisplay}`;
+                    // _remoteJid = upsert time ගෙ real phone JID (94761234567@s.whatsapp.net)
+                    // proto.key.remoteJid = @lid විය හැකි — avoid
+                    deleterJid = storedMsg?._remoteJid || storedMsg?._senderJid || proto.key.remoteJid || '';
+                    deleterJid = deleterJid.replace(/:\d+@/, '@');
+                    const partnerNum = deleterJid.split('@')[0];
+                    chatLabel  = `DM: +${partnerNum}`;
                   }
 
-                  const cleanDeleterJid = deleterJid.replace(/:\d+@/, '@');
-                  const isDeleterLid = cleanDeleterJid.endsWith('@lid');
-                  const deleterNum = isDeleterLid
-                    ? (storedMsg?._pushName || cleanDeleterJid.split('@')[0])
-                    : `+${cleanDeleterJid.split('@')[0]}`;
+                  const deleterNum = deleterJid.replace(/:\d+@/, '@').split('@')[0];
 
                   let notifyText =
                     `🗑️ *Antidelete Alert*\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `👤 *Deleted by:* ${deleterNum}\n` +
+                    `👤 *Deleted by:* +${deleterNum}\n` +
                     `📍 *Chat:* ${chatLabel}\n` +
                     `🕐 *Time:* ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━\n`;

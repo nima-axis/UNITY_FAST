@@ -549,44 +549,147 @@ const _unityExtra = {
     if (['tiktok','ttsearch','ttdl'].includes(cmd)) {
       if (!q) {
         return sendButtons2(sock, chat, {
-          text: `🎵 *TikTok*\n\n*.tiktok* [search query] — Search\n*.ttdl* [tiktok url] — Download video\n\n${cfg2.footer}`,
+          text: `🎵 *TikTok*\n\n*.tiktok* [search query] — Search\n*.ttdl* [tiktok url] — Download video\n*.ttmp3* [tiktok url] — Audio only\n\n${cfg2.footer}`,
           footer: cfg2.footer,
           buttons: [{ label: '📋 Menu', id: '.menu' }],
           quoted: msg,
         });
       }
       await m.react('⏳');
+
+      // ── Helper: TikTok Download (multi-method fallback) ──────
+      async function ttDownload(url) {
+        const enc = encodeURIComponent(url);
+
+        // Method 1: tikwm.com
+        try {
+          const r = await axios.post('https://www.tikwm.com/api/', `url=${enc}&count=12&cursor=0&web=1&hd=1`, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            timeout: 20000,
+          });
+          const d = r.data?.data;
+          if (d?.play) return { title: d.title || 'TikTok Video', videoUrl: d.hdplay || d.play, audioUrl: d.music, cover: d.cover, author: d.author?.nickname || '—', likes: d.digg_count || 0 };
+        } catch {}
+
+        // Method 2: tiklydown
+        try {
+          const r = await axios.get(`https://api.tiklydown.eu.org/api/download/v3?url=${enc}`, { timeout: 20000 });
+          const d = r.data;
+          if (d?.video?.noWatermark) return { title: d.title || 'TikTok Video', videoUrl: d.video.noWatermark, audioUrl: d.music?.play_url, cover: d.cover, author: d.author?.name || '—', likes: d.stats?.likeCount || 0 };
+        } catch {}
+
+        // Method 3: ttsave
+        try {
+          const r = await axios.get(`https://ttsave.app/download?id=${enc}&lang=en`, { timeout: 20000 });
+          const d = r.data;
+          const vUrl = d?.data?.links?.find(l => l.label?.includes('No Watermark'))?.link;
+          if (vUrl) return { title: d.data?.title || 'TikTok Video', videoUrl: vUrl, audioUrl: null, cover: d.data?.cover, author: d.data?.author || '—', likes: 0 };
+        } catch {}
+
+        // Method 4: savetik
+        try {
+          const r = await axios.get(`https://savetik.co/api/ajaxSearch`, {
+            params: { q: url, lang: 'en' },
+            timeout: 20000,
+          });
+          const d = r.data;
+          if (d?.status === 'ok') {
+            const match = d.data?.match(/href="(https:\/\/[^"]+no_watermark[^"]+)"/);
+            if (match) return { title: 'TikTok Video', videoUrl: match[1], audioUrl: null, cover: null, author: '—', likes: 0 };
+          }
+        } catch {}
+
+        throw new Error('All download methods failed');
+      }
+
+      // ── Helper: TikTok Search (multi-method fallback) ────────
+      async function ttSearch(query) {
+        const enc = encodeURIComponent(query);
+
+        // Method 1: tikwm search
+        try {
+          const r = await axios.get(`https://www.tikwm.com/api/feed/search?keywords=${enc}&count=5&cursor=0&web=1`, { timeout: 20000 });
+          const items = r.data?.data?.videos;
+          if (items?.length) {
+            return items.slice(0, 3).map(v => ({
+              title: v.title || 'TikTok Video',
+              author: v.author?.nickname || '—',
+              likes: v.digg_count || 0,
+              views: v.play_count || 0,
+              url: `https://www.tiktok.com/@${v.author?.unique_id}/video/${v.video_id}`,
+              cover: v.cover,
+            }));
+          }
+        } catch {}
+
+        // Method 2: tiktok oembedding via rapidapi-style
+        try {
+          const r = await axios.get(`https://scraptik.p.rapidapi.com/search?keyword=${enc}&count=5`, {
+            headers: {
+              'X-RapidAPI-Key': 'SIGN-UP-FOR-KEY',
+              'X-RapidAPI-Host': 'scraptik.p.rapidapi.com',
+            },
+            timeout: 15000,
+          });
+          const items = r.data?.aweme_list;
+          if (items?.length) {
+            return items.slice(0, 3).map(v => ({
+              title: v.desc || 'TikTok Video',
+              author: v.author?.nickname || '—',
+              likes: v.statistics?.digg_count || 0,
+              views: v.statistics?.play_count || 0,
+              url: `https://www.tiktok.com/@${v.author?.unique_id}/video/${v.aweme_id}`,
+              cover: null,
+            }));
+          }
+        } catch {}
+
+        // Method 3: dark-yasiya fallback (original, may or may not work)
+        try {
+          const r = await axios.get(`https://www.dark-yasiya-api.site/search/tiktok?query=${enc}`, { timeout: 15000 });
+          const items = r.data?.result;
+          if (items?.length) {
+            return items.slice(0, 3).map(v => ({
+              title: v.title || 'TikTok Video',
+              author: v.author || '—',
+              likes: v.like_count || 0,
+              views: v.view_count || 0,
+              url: v.url,
+              cover: null,
+            }));
+          }
+        } catch {}
+
+        throw new Error('All search methods failed');
+      }
+
       try {
         if (q.startsWith('https://')) {
-          // Download
-          const res  = await axios.get(`https://www.dark-yasiya-api.site/download/tiktok?url=${encodeURIComponent(q)}`, { timeout: 30000 });
-          const data = res.data;
-          if (!data?.status || !data?.result) throw new Error('No result');
-          const { title, play: videoUrl, music: audioUrl, cover } = data.result;
+          // ── DOWNLOAD ──────────────────────────────────────────
+          const { title, videoUrl, audioUrl, author, likes } = await ttDownload(q);
           await sock.sendMessage(chat, {
             video: { url: videoUrl },
-            caption: `🎵 *${title || 'TikTok Video'}*\n\n${cfg2.footer}`,
+            caption: `🎵 *${title}*\n👤 ${author}\n❤️ ${likes.toLocaleString()}\n\n${cfg2.footer}`,
           }, { quoted: msg });
           await m.react('✅');
         } else {
-          // Search
-          const res  = await axios.get(`https://www.dark-yasiya-api.site/search/tiktok?query=${encodeURIComponent(q)}`, { timeout: 20000 });
-          const data = res.data;
-          if (!data?.status || !data?.result?.length) throw new Error('No results');
-          const item = data.result[0];
+          // ── SEARCH ────────────────────────────────────────────
+          const results = await ttSearch(q);
+          const top = results[0];
+          const otherLinks = results.slice(1).map((r, i) => `\n${i + 2}. ${r.title?.slice(0, 40)} — ${r.url}`).join('');
           return sendButtons2(sock, chat, {
-            text: `🎵 *TikTok Search*\n\n📌 *${item.title || 'TikTok Result'}*\n👤 *Author:* ${item.author || '—'}\n❤️ *Likes:* ${(item.like_count || 0).toLocaleString()}\n▶️ *Views:* ${(item.view_count || 0).toLocaleString()}\n\n*.ttdl* ${item.url}\n\n${cfg2.footer}`,
+            text: `🎵 *TikTok Search* — "${q}"\n\n📌 *${top.title}*\n👤 *Author:* ${top.author}\n❤️ *Likes:* ${top.likes.toLocaleString()}\n▶️ *Views:* ${top.views.toLocaleString()}\n\n${otherLinks ? `*More results:*${otherLinks}\n\n` : ''}*.ttdl* ${top.url}\n\n${cfg2.footer}`,
             footer: cfg2.footer,
             buttons: [
-              { label: '⬇️ Download', id: `.ttdl ${item.url}` },
-              { label: '📋 Menu',     id: '.menu' },
+              { label: '⬇️ Download #1', id: `.ttdl ${top.url}` },
+              { label: '📋 Menu',         id: '.menu' },
             ],
             quoted: msg,
           });
         }
       } catch (e) {
         await m.react('❌');
-        return m.reply(`❌ TikTok error: ${e.message}\n\n${cfg2.footer}`);
+        return m.reply(`❌ TikTok error: ${e.message}\n\n💡 Try a different URL or keyword.\n\n${cfg2.footer}`);
       }
     }
 

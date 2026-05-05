@@ -286,20 +286,36 @@ async function startSession(userId, onUpdate) {
           }
         }
       });
+      const storeLidMapping = (c) => {
+        // c.id = phone JID (94XX@s.whatsapp.net) or lid JID (XXXXX@lid)
+        // c.lid = lid JID (XXXXX@lid) when c.id is phone JID
+        if (c.id && c.lid) {
+          const phoneJid = c.id.endsWith('@lid') ? c.lid : c.id;
+          const lidJid   = c.id.endsWith('@lid') ? c.id  : c.lid;
+          if (!phoneJid.endsWith('@lid')) {
+            // store both with and without @lid suffix as keys for safe lookup
+            session.lidMap.set(lidJid, phoneJid.replace(/:\d+@/, '@'));
+            const lidNum = lidJid.split('@')[0];
+            session.lidMap.set(`${lidNum}@lid`, phoneJid.replace(/:\d+@/, '@'));
+          }
+        }
+        // also handle case where c.phone is directly available
+        if (c.id && c.id.endsWith('@lid') && c.phone) {
+          const phoneJid = `${c.phone}@s.whatsapp.net`;
+          session.lidMap.set(c.id, phoneJid);
+        }
+      };
+
       sock.ev.on('contacts.upsert', (contacts) => {
         for (const c of (contacts || [])) {
           trackJid(c.id);
-          // Debug: log first few contacts to see structure
-          if (c.id && c.id.endsWith('@lid')) {
-            console.log('[LID CONTACT]', JSON.stringify({ id: c.id, lid: c.lid, notify: c.notify, name: c.name, verifiedName: c.verifiedName, phone: c.phone }));
-          }
-          // @lid → real phone JID mapping
-          if (c.lid && c.id && !c.id.endsWith('@lid')) {
-            session.lidMap.set(c.lid, c.id);
-          }
-          if (c.id && !c.id.endsWith('@lid') && c.lid) {
-            session.lidMap.set(c.lid, c.id);
-          }
+          storeLidMapping(c);
+        }
+      });
+
+      sock.ev.on('contacts.update', (contacts) => {
+        for (const c of (contacts || [])) {
+          storeLidMapping(c);
         }
       });
 
@@ -753,14 +769,20 @@ async function startSession(userId, onUpdate) {
             // DM case: remoteJid = chat partner (works for both fromMe=true and fromMe=false)
             // Group case: participant = actual sender, remoteJid = group JID
             const isGroup = (msg.key.remoteJid || '').endsWith('@g.us');
-            const realSenderJid = isGroup
-              ? (msg.key.participant || msg.key.remoteJid || '')
-              : (msg.key.remoteJid || '');
+            const resolveJid = (jid) => {
+              if (!jid) return jid;
+              const clean = jid.replace(/:\d+@/, '@');
+              if (clean.endsWith('@lid')) {
+                return session.lidMap.get(clean) || session.lidMap.get(clean.split('@')[0] + '@lid') || clean;
+              }
+              return clean;
+            };
+            const rawSender = isGroup ? (msg.key.participant || msg.key.remoteJid || '') : (msg.key.remoteJid || '');
             session.msgStore.set(msg.key.id, {
               ...msg.message,
               _pushName:   msg.pushName || '',
-              _senderJid:  realSenderJid,
-              _remoteJid:  (msg.key.remoteJid || '').replace(/:\d+@/, '@'), // always real phone JID
+              _senderJid:  resolveJid(rawSender),
+              _remoteJid:  resolveJid(msg.key.remoteJid || ''),
               _fromMe:     msg.key.fromMe || false,
             });
             if (session.msgStore.size > 2000) {

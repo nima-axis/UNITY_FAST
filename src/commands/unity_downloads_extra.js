@@ -381,139 +381,174 @@ module.exports = {
       }
       await m.react('⏳');
 
-      // ── Multi-API fallback (2026-04-14) ──────────────────
-      const FB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36';
+      // ── Multi-API fallback (2026-05 refresh) ─────────────────
+      const FB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+      // ── Shared helper: verify a URL is actually a playable video ──
+      const verifyUrl = async (url) => {
+        if (!url || !url.startsWith('http')) return false;
+        try {
+          const h = await axios.head(url, { timeout: 8000, maxRedirects: 5 });
+          const ct = h.headers?.['content-type'] || '';
+          return ct.includes('video') || ct.includes('octet-stream') || ct.includes('mp4');
+        } catch { return true; } // assume ok if HEAD fails
+      };
+
       const fbApis = [
-        // 1. Cobalt FB — most reliable 2026 (moved to position 1)
+        // 1. Cobalt — try multiple instances (updated 2026 format)
         async () => {
-          for (const inst of ['https://api.cobalt.tools', 'https://cobalt.oisd.nl', 'https://cobalt.catvibers.me']) {
+          const instances = [
+            'https://api.cobalt.tools',
+            'https://cobalt.oisd.nl',
+            'https://cobalt.catvibers.me',
+            'https://co.wuk.sh',
+          ];
+          for (const inst of instances) {
             try {
-              const r = await axios.post(`${inst}/`, { url: q, downloadMode: 'auto', videoQuality: '720' }, {
-                headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, timeout: 15000,
+              const r = await axios.post(`${inst}/`, {
+                url: q,
+                videoQuality: '720',
+                downloadMode: 'auto',
+                filenameStyle: 'pretty',
+              }, {
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                timeout: 18000,
               });
-              if (r?.data?.url) return { sd: r.data.url, hd: r.data.url, title: 'Facebook Video', thumbnail: null };
+              const url = r?.data?.url || r?.data?.tunnel;
+              if (url) return { sd: url, hd: url, title: 'Facebook Video', thumbnail: null };
             } catch {}
           }
-          throw new Error('cobalt: all failed');
+          throw new Error('cobalt: all instances failed');
         },
-        // 2. Dark Yasiya
+
+        // 2. SaveVid
         async () => {
-          const r = await axios.get(`https://www.dark-yasiya-api.site/download/facebook?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          if (!r.data?.status || !r.data?.result) throw new Error('no result');
-          const { sd, hd, title, thumbnail } = r.data.result;
-          if (!sd && !hd) throw new Error('no video url');
-          return { sd: sd || hd, hd: hd || sd, title, thumbnail };
+          const r = await axios.post('https://savevid.net/api/ajaxSearch', new URLSearchParams({ q, lang: 'en' }), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://savevid.net/', 'User-Agent': FB_UA },
+            timeout: 20000,
+          });
+          const html = r?.data?.data || '';
+          const hd = html.match(/href="(https:[^"]+)"[^>]*>[^<]*HD/)?.[1];
+          const sd = html.match(/href="(https:[^"]+)"[^>]*>[^<]*SD/)?.[1] || html.match(/href="(https:[^"]+\.mp4[^"]*)"/)?.[1];
+          const url = hd || sd;
+          if (!url) throw new Error('no url');
+          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
         },
-        // 3. Siputzx FB
-        async () => {
-          const r = await axios.get(`https://api.siputzx.my.id/api/d/fb?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          const d = r.data?.data || r.data;
-          const sd = d?.sd || d?.download || d?.url;
-          const hd = d?.hd || sd;
-          if (!sd) throw new Error('no url');
-          return { sd, hd, title: d?.title || 'Facebook Video', thumbnail: d?.thumbnail || null };
-        },
-        // 4. Agatz FB
-        async () => {
-          const r = await axios.get(`https://api.agatz.xyz/api/facebook?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          const d = r.data?.data || r.data;
-          const sd = d?.sd || d?.url;
-          const hd = d?.hd || sd;
-          if (!sd) throw new Error('no url');
-          return { sd, hd, title: d?.title || 'Facebook Video', thumbnail: d?.thumbnail || null };
-        },
-        // 5. Paxsenix FB
-        async () => {
-          const r = await axios.get(`https://paxsenix.serv00.net/api/facebook?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          const d = r.data?.result || r.data;
-          const sd = d?.sd || d?.url || d?.download;
-          if (!sd) throw new Error('no url');
-          return { sd, hd: d?.hd || sd, title: d?.title || 'Facebook Video', thumbnail: d?.thumbnail || null };
-        },
-        // 6. Ndevapi FB
-        async () => {
-          const r = await axios.get(`https://ndevapi.com/download/facebook?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          const d = r.data?.data || r.data;
-          const sd = d?.sd || d?.url;
-          if (!sd) throw new Error('no url');
-          return { sd, hd: d?.hd || sd, title: d?.title || 'Facebook Video', thumbnail: d?.thumbnail || null };
-        },
-        // 7. Eliteprotech FB
-        async () => {
-          const r = await axios.get(`https://eliteprotech-apis.zone.id/fb?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          const d = r.data?.result || r.data;
-          const sd = d?.sd || d?.url || d?.downloadURL;
-          if (!sd) throw new Error('no url');
-          return { sd, hd: d?.hd || sd, title: d?.title || 'Facebook Video', thumbnail: d?.thumbnail || null };
-        },
-        // 8. XTeam FB
-        async () => {
-          const r = await axios.get(`https://api.xteam.xyz/facebook?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          const d = r.data?.result || r.data;
-          const sd = d?.sd || d?.url;
-          if (!sd) throw new Error('no url');
-          return { sd, hd: d?.hd || sd, title: d?.title || 'Facebook Video', thumbnail: d?.thumbnail || null };
-        },
-        // 9. Snapsave FB
+
+        // 3. Snapsave (updated payload)
         async () => {
           const r = await axios.post('https://snapsave.app/action.php', new URLSearchParams({ url: q }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: 'https://snapsave.app/', 'User-Agent': FB_UA },
-            timeout: 25000,
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Referer': 'https://snapsave.app/',
+              'User-Agent': FB_UA,
+              'Origin': 'https://snapsave.app',
+            },
+            timeout: 20000,
           });
           const html = r?.data || '';
-          const hdMatch = html.match(/href="(https:\/\/video[^"]+\.mp4[^"]*)"/);
-          const sdMatch = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/);
-          const url = hdMatch?.[1] || sdMatch?.[1];
-          if (!url) throw new Error('no url in html');
-          return { sd: url, hd: url, title: 'Facebook Video', thumbnail: null };
+          const hd = html.match(/download_btn[^>]*href="(https:\/\/[^"]+)"[^>]*>HD/)?.[1]
+            || html.match(/href="(https:\/\/video[^"]+\.mp4[^"]*)"/)?.[1];
+          const sd = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
+          const url = hd || sd;
+          if (!url) throw new Error('no url');
+          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
         },
-        // 10. Fdown FB
-        async () => {
-          const r = await axios.post('https://fdown.net/download.php', new URLSearchParams({ URLz: q }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: 'https://fdown.net/', 'User-Agent': FB_UA },
-            timeout: 25000,
-          });
-          const html = r?.data || '';
-          const hdMatch = html.match(/id="hdlink"[^>]*href="([^"]+)"/);
-          const sdMatch = html.match(/id="sdlink"[^>]*href="([^"]+)"/);
-          const sd = sdMatch?.[1] || hdMatch?.[1];
-          const hd = hdMatch?.[1] || sd;
-          if (!sd) throw new Error('no url in fdown');
-          return { sd, hd, title: 'Facebook Video', thumbnail: null };
-        },
-        // 11. Getfvid FB
+
+        // 4. Getfvid (HTML scrape)
         async () => {
           const r = await axios.post('https://www.getfvid.com/downloader', new URLSearchParams({ url: q }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: 'https://www.getfvid.com/', 'User-Agent': FB_UA },
-            timeout: 25000,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.getfvid.com/', 'User-Agent': FB_UA },
+            timeout: 20000,
           });
           const html = r?.data || '';
-          const m1 = html.match(/href="(https:\/\/[^"]*\.mp4[^"]*)"/);
-          if (m1?.[1]) return { sd: m1[1], hd: m1[1], title: 'Facebook Video', thumbnail: null };
-          throw new Error('no url');
+          const hd = html.match(/href="(https:\/\/[^"]+)"[^>]*>HD/)?.[1];
+          const sd = html.match(/href="(https:\/\/[^"]+)"[^>]*>SD/)?.[1] || html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
+          const url = hd || sd;
+          if (!url) throw new Error('no url');
+          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
         },
-        // 12. Akuari FB
+
+        // 5. Fdown.net (updated regex)
         async () => {
-          const r = await axios.get(`https://api.akuari.my.id/downloader/facebook?url=${encodeURIComponent(q)}`, { timeout: 25000 });
-          const d = r.data?.result || r.data;
-          const sd = d?.sd || d?.url;
+          const r = await axios.post('https://fdown.net/download.php', new URLSearchParams({ URLz: q }), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://fdown.net/', 'User-Agent': FB_UA },
+            timeout: 20000,
+          });
+          const html = r?.data || '';
+          const hd = html.match(/id="hdlink"[^>]*href="([^"]+)"/)?.[1]
+            || html.match(/href="([^"]+)"[^>]*>.*?Normal Quality/s)?.[1];
+          const sd = html.match(/id="sdlink"[^>]*href="([^"]+)"/)?.[1]
+            || html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
+          const url = hd || sd;
+          if (!url) throw new Error('no url');
+          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
+        },
+
+        // 6. Loco Downloader
+        async () => {
+          const r = await axios.post('https://locodownloader.com/api/single/autolink', new URLSearchParams({ url: q }), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://locodownloader.com/', 'User-Agent': FB_UA },
+            timeout: 20000,
+          });
+          const d = r?.data;
+          const links = d?.data?.links || d?.links || [];
+          const hd = links.find(l => l.quality === 'HD' || l.label?.includes('HD'))?.url;
+          const sd = links.find(l => l.quality === 'SD' || l.label?.includes('SD'))?.url || links[0]?.url;
           if (!sd) throw new Error('no url');
-          return { sd, hd: d?.hd || sd, title: d?.title || 'Facebook Video', thumbnail: d?.thumbnail || null };
+          return { sd, hd: hd || sd, title: d?.data?.title || 'Facebook Video', thumbnail: d?.data?.thumbnail || null };
+        },
+
+        // 7. Y2mate-style FB
+        async () => {
+          const r1 = await axios.post('https://www.y2mate.com/mates/analyzeV2/ajax', new URLSearchParams({ k_query: q, k_page: 'Facebook', hl: 'en', q_auto: 0 }), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.y2mate.com/', 'User-Agent': FB_UA },
+            timeout: 20000,
+          });
+          const vid = r1?.data?.vid;
+          const kId = r1?.data?.links?.mp4?.['137']?.k || r1?.data?.links?.mp4?.['136']?.k || r1?.data?.links?.mp4?.[Object.keys(r1?.data?.links?.mp4||{})[0]]?.k;
+          if (!vid || !kId) throw new Error('no vid/key');
+          const r2 = await axios.post('https://www.y2mate.com/mates/convertV2/index', new URLSearchParams({ vid, k: kId }), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.y2mate.com/', 'User-Agent': FB_UA },
+            timeout: 20000,
+          });
+          const url = r2?.data?.dlink;
+          if (!url) throw new Error('no dlink');
+          return { sd: url, hd: url, title: r1?.data?.title || 'Facebook Video', thumbnail: null };
+        },
+
+        // 8. SaveFrom (net)
+        async () => {
+          const r = await axios.get(`https://worker.sf-tools.com/savefrom.php?sf_url=${encodeURIComponent(q)}&lang=en`, {
+            headers: { 'User-Agent': FB_UA, 'Referer': 'https://en.savefrom.net/' },
+            timeout: 20000,
+          });
+          const d = r?.data;
+          const links = d?.[0]?.url || [];
+          const hd = links.find(l => l?.type?.includes('mp4') && (l?.id?.includes('hd') || parseInt(l?.id) >= 720))?.url;
+          const sd = links.find(l => l?.type?.includes('mp4'))?.url;
+          const url = hd || sd;
+          if (!url) throw new Error('no url');
+          return { sd: url, hd: hd || url, title: d?.[0]?.title || 'Facebook Video', thumbnail: d?.[0]?.thumb || null };
         },
       ];
 
       let fbData = null;
       let usedApi = 'unknown';
+      const apiNames = ['Cobalt', 'SaveVid', 'Snapsave', 'Getfvid', 'Fdown', 'LocoDownloader', 'Y2mate', 'SaveFrom'];
+
       for (let i = 0; i < fbApis.length; i++) {
         try {
-          fbData = await fbApis[i]();
-          if (fbData?.sd || fbData?.hd) {
-            usedApi = ['DarkYasiya','Siputzx','Agatz','Paxsenix','Ndevapi','EliteProTech','XTeam','Cobalt','Snapsave','Fdown','Getfvid','Akuari'][i] || `API${i+1}`;
+          const result = await fbApis[i]();
+          const url = result?.sd || result?.hd;
+          if (url) {
+            fbData = result;
+            usedApi = apiNames[i] || `API${i + 1}`;
             console.log(`[FB DL] ✅ ${usedApi}`);
             break;
           }
         } catch (e) {
-          console.log(`[FB DL] ❌ API${i+1}: ${e.message?.substring(0, 60)}`);
+          console.log(`[FB DL] ❌ ${apiNames[i] || `API${i + 1}`}: ${e.message?.substring(0, 80)}`);
         }
       }
 

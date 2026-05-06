@@ -2,6 +2,11 @@
 const { getT } = require('../lang');
 const axios    = require('axios');
 const path     = require('path');
+const fs       = require('fs');
+const os       = require('os');
+const { exec, execSync } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 const cfg      = require('../../config');
 const { sendButtons } = require('./helper');
 
@@ -372,298 +377,212 @@ module.exports = {
     // ── FACEBOOK ──────────────────────────────────────
     if (['facebook', 'fb'].includes(cmd)) {
       if (!q || !q.startsWith('https://')) {
-        return sendButtons(sock, chat, {
-          text: `📘 *Facebook Video Downloader*\n\n*Usage:* .fb <facebook link>\n\n*Example:* .fb https://www.facebook.com/...\n\n${cfg.footer}`,
-          footer: cfg.footer,
-          buttons: [{ label: '📋 Menu', id: '.menu' }],
-          quoted: msg,
-        });
-      }
-      await m.react('⏳');
-      await m.react('⏳');
-
-      const FB_UA = 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
-
-      // ── Step 1: Resolve share/reel links + try direct CDN ──
-      let fbUrl = q;
-
-      const tryResolveFb = async (inputUrl) => {
-        const mbasicUrl = inputUrl.replace('www.facebook.com', 'mbasic.facebook.com').replace('m.facebook.com', 'mbasic.facebook.com');
-        for (const tryUrl of [mbasicUrl, inputUrl]) {
-          try {
-            const res = await axios.get(tryUrl, {
-              maxRedirects: 10, timeout: 12000,
-              headers: {
-                'User-Agent': FB_UA,
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
-              },
-              validateStatus: () => true,
-            });
-            const finalUrl = res?.request?.res?.responseUrl || res?.request?.responseURL || tryUrl;
-            if (finalUrl && finalUrl.includes('facebook.com') && finalUrl !== q) {
-              fbUrl = finalUrl.split('?')[0];
-              console.log('[FB DL] Resolved ->', fbUrl.substring(0, 80));
-            }
-            const html = typeof res?.data === 'string' ? res.data : '';
-            if (!html) continue;
-            // mbasic direct video href
-            const directVid = html.match(/href="(https:\/\/video\.xx\.fbcdn\.net[^"]+)"/)?.[1]
-              || html.match(/href="(https:\/\/[^"]*fbcdn\.net\/v\/[^"]+)"/)?.[1];
-            if (directVid) return { directUrl: directVid.replace(/&amp;/g, '&') };
-            // og:video / playable_url
-            const ogVid = html.match(/property="og:video:secure_url"[^>]*content="([^"]+)"/)?.[1]
-              || html.match(/property="og:video"[^>]*content="([^"]+)"/)?.[1]
-              || html.match(/"playable_url_quality_hd":"([^"]+)"/)?.[1]
-              || html.match(/"playable_url":"([^"]+)"/)?.[1];
-            if (ogVid && (ogVid.includes('fbcdn') || ogVid.includes('.mp4'))) {
-              return { directUrl: ogVid.replace(/&amp;/g, '&').replace(/\\/g, '') };
-            }
-          } catch (e) {
-            console.log('[FB DL] resolve try failed:', e.message?.substring(0, 50));
-          }
-        }
-        return null;
-      };
-
-      const directResult = await tryResolveFb(q);
-      if (directResult?.directUrl) {
-        console.log('[FB DL] Direct CDN send');
-        try {
-          await sock.sendMessage(chat, {
-            video: { url: directResult.directUrl },
-            caption: `📘 *Facebook Video*\n\n${cfg.footer}`,
-          }, { quoted: msg });
-          return m.react('✅');
-        } catch (e) {
-          console.log('[FB DL] Direct send failed, trying APIs:', e.message?.substring(0, 50));
-        }
+        return m.reply(`📘 *Facebook Video Downloader*\n\n*Usage:* .fb <facebook link>\n*Example:* .fb https://www.facebook.com/share/r/...\n\n${cfg.footer}`);
       }
 
-      // ── Step 2: yt-dlp (PRIMARY — already installed in Dockerfile) ──
-      const { exec: _exec } = require('child_process');
-      const _execP = require('util').promisify(_exec);
+      await m.react('⏳');
 
-      const tryYtDlp = async (url) => {
-        // yt-dlp supports facebook.com/share/r/, reel/, watch?v= etc.
-        const cmd = `yt-dlp --no-warnings --quiet --get-url --format "best[ext=mp4]/best[ext=mp4]/best" "${url}"`;
-        const { stdout } = await _execP(cmd, { timeout: 35000 });
-        const videoUrl = stdout.trim().split('\n').find(l => l.startsWith('http'));
-        if (!videoUrl) throw new Error('yt-dlp: no URL returned');
+      // Status message — show immediately
+      let statusMsg = null;
+      try {
+        statusMsg = await m.reply(`⏬ *Downloading Facebook video...*\n\n🔗 ${q}\n\n_Please wait..._`);
+      } catch (e) {
+        console.log('[FB] status msg failed:', e.message);
+      }
 
-        // Get title separately
-        let title = 'Facebook Video';
-        try {
-          const { stdout: t } = await _execP(`yt-dlp --no-warnings --quiet --get-title "${url}"`, { timeout: 15000 });
-          title = t.trim().split('\n')[0] || title;
-        } catch {}
+      const tmpDir = path.join(os.tmpdir(), `fb_${Date.now()}`);
+      fs.mkdirSync(tmpDir, { recursive: true });
+      const cleanup = () => { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} };
 
-        return { sd: videoUrl, hd: videoUrl, title, thumbnail: null };
+      // ── yt-dlp (PRIMARY) ─────────────────────────────
+      const runYtDlp = async (url) => {
+        const outTpl = path.join(tmpDir, '%(title).60s.%(ext)s');
+        const cmd = `yt-dlp --no-warnings -f "best[ext=mp4]/best" --merge-output-format mp4 -o "${outTpl}" "${url}"`;
+        console.log('[FB] yt-dlp start');
+        await execAsync(cmd, { timeout: 120000 });
+        const files = fs.readdirSync(tmpDir);
+        const file = files.find(f => /\.(mp4|mkv|webm)$/i.test(f));
+        if (!file) throw new Error('yt-dlp: no output file');
+        return path.join(tmpDir, file);
       };
+
+      // ── HTTP API chain (fallback) ─────────────────────
+      const FB_UA = 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36';
+      const apiChain = [
+
+        // 1. Snapsave
+        async () => {
+          const r = await axios.post('https://snapsave.app/action.php', new URLSearchParams({ url: q }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://snapsave.app/', 'Origin': 'https://snapsave.app', 'User-Agent': FB_UA }, timeout: 20000 });
+          const html = String(r?.data || '');
+          const u = html.match(/href="(https:\/\/(?:video|download)[^"]+\.mp4[^"]*)"/)?.[1]
+            || html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
+          if (!u) throw new Error('no url');
+          return u;
+        },
+
+        // 2. Getfvid
+        async () => {
+          const r = await axios.post('https://www.getfvid.com/downloader', new URLSearchParams({ url: q }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.getfvid.com/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const html = String(r?.data || '');
+          const hd = html.match(/href="(https:\/\/[^"]+)"[^>]*>\s*HD/i)?.[1];
+          const sd = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
+          if (!hd && !sd) throw new Error('no url');
+          return hd || sd;
+        },
+
+        // 3. Fdown.net (updated June 2025 — fixed Reels)
+        async () => {
+          const r = await axios.post('https://fdown.net/download.php', new URLSearchParams({ URLz: q }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://fdown.net/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const html = String(r?.data || '');
+          const u = html.match(/id="hdlink"[^>]*href="([^"]+)"/)?.[1]
+            || html.match(/id="sdlink"[^>]*href="([^"]+)"/)?.[1]
+            || html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
+          if (!u) throw new Error('no url');
+          return u;
+        },
+
+        // 4. SaveVid
+        async () => {
+          const r = await axios.post('https://savevid.net/api/ajaxSearch', new URLSearchParams({ q, lang: 'en' }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://savevid.net/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const html = String(r?.data?.data || '');
+          const hd = html.match(/href="(https:[^"]+)"[^>]*>[^<]*HD/)?.[1];
+          const sd = html.match(/href="(https:[^"]+\.mp4[^"]*)"/)?.[1];
+          if (!hd && !sd) throw new Error('no url');
+          return hd || sd;
+        },
+
+        // 5. SnapAny
+        async () => {
+          const r = await axios.post('https://snapany.com/api/convert', new URLSearchParams({ url: q }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://snapany.com/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const items = r?.data?.data?.medias || r?.data?.medias || [];
+          const vid = items.find(i => i.extension === 'mp4' || i.type?.includes('video'));
+          if (!vid?.url) throw new Error('no url');
+          return vid.url;
+        },
+
+        // 6. Y2meta
+        async () => {
+          const r = await axios.post('https://www.y2meta.com/api/json', new URLSearchParams({ url: q, lang: 'en' }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.y2meta.com/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const u = r?.data?.url || r?.data?.hd || r?.data?.sd;
+          if (!u) throw new Error('no url');
+          return u;
+        },
+
+        // 7. SaveFrom worker
+        async () => {
+          const r = await axios.get(`https://worker.sf-tools.com/savefrom.php?sf_url=${encodeURIComponent(q)}&lang=en`,
+            { headers: { 'Referer': 'https://en.savefrom.net/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const links = r?.data?.[0]?.url || [];
+          const best = links.find(l => l?.type?.includes('mp4'))?.url || links[0]?.url;
+          if (!best) throw new Error('no url');
+          return best;
+        },
+
+        // 8. FVidGo (2026 recommended)
+        async () => {
+          const r = await axios.post('https://fvidgo.com/wp-json/aio-dl/video-data/', new URLSearchParams({ url: q, token: '' }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://fvidgo.com/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const medias = r?.data?.medias || [];
+          const vid = medias.find(m => m.extension === 'mp4' || m.url?.includes('.mp4'));
+          if (!vid?.url) throw new Error('no url');
+          return vid.url;
+        },
+
+        // 9. LocoDownloader
+        async () => {
+          const r = await axios.post('https://locodownloader.com/api/single/autolink', new URLSearchParams({ url: q }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://locodownloader.com/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const links = r?.data?.data?.links || r?.data?.links || [];
+          const best = links.find(l => l.quality === 'HD')?.url || links[0]?.url;
+          if (!best) throw new Error('no url');
+          return best;
+        },
+
+        // 10. SSYoutube-style generic
+        async () => {
+          const r = await axios.post('https://www.dlnow.co/api/single/autolink', new URLSearchParams({ url: q }),
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.dlnow.co/', 'User-Agent': FB_UA }, timeout: 20000 });
+          const links = r?.data?.data?.links || [];
+          const vid = links.find(l => l.type?.includes('mp4') || l.extension === 'mp4');
+          if (!vid?.url) throw new Error('no url');
+          return vid.url;
+        },
+
+      ];
+      const apiNames = ['Snapsave','Getfvid','Fdown','SaveVid','SnapAny','Y2meta','SaveFrom','FVidGo','LocoDownloader','DLNow'];
 
       try {
-        console.log('[FB DL] Trying yt-dlp...');
-        const ytResult = await tryYtDlp(fbUrl !== q ? fbUrl : q);
-        if (ytResult?.sd) {
-          console.log('[FB DL] yt-dlp OK');
-          await sock.sendMessage(chat, {
-            video: { url: ytResult.sd },
-            caption: `📘 *${ytResult.title}*\n\n${cfg.footer}`,
-          }, { quoted: msg });
-          return m.react('✅');
-        }
-      } catch (ytErr) {
-        console.log('[FB DL] yt-dlp failed:', ytErr.message?.substring(0, 80));
-      }
+        let videoBuffer = null;
+        let videoTitle  = 'Facebook Video';
 
-      // ── Step 3: HTTP API fallback chain ────────────────────
-      const enc = encodeURIComponent(fbUrl);
-
-      const fbApis = [
-        // 1. Cobalt (multiple instances, updated 2026 body)
-        async () => {
-          const instances = ['https://api.cobalt.tools', 'https://cobalt.oisd.nl', 'https://cobalt.catvibers.me', 'https://co.wuk.sh'];
-          for (const inst of instances) {
-            try {
-              const r = await axios.post(`${inst}/`, {
-                url: fbUrl, videoQuality: '720', downloadMode: 'auto', filenameStyle: 'pretty',
-              }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }, timeout: 15000 });
-              const vUrl = r?.data?.url || r?.data?.tunnel;
-              if (vUrl) return { sd: vUrl, hd: vUrl, title: 'Facebook Video', thumbnail: null };
-            } catch {}
-          }
-          throw new Error('cobalt: all instances failed');
-        },
-
-        // 2. SaveVid
-        async () => {
-          const r = await axios.post('https://savevid.net/api/ajaxSearch', new URLSearchParams({ q: fbUrl, lang: 'en' }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://savevid.net/', 'User-Agent': FB_UA },
-            timeout: 20000,
-          });
-          const html = r?.data?.data || '';
-          const hd = html.match(/href="(https:[^"]+)"[^>]*>[^<]*HD/)?.[1];
-          const sd = html.match(/href="(https:[^"]+)"[^>]*>[^<]*SD/)?.[1] || html.match(/href="(https:[^"]+\.mp4[^"]*)"/)?.[1];
-          const url = hd || sd;
-          if (!url) throw new Error('no url');
-          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
-        },
-
-        // 3. Snapsave
-        async () => {
-          const r = await axios.post('https://snapsave.app/action.php', new URLSearchParams({ url: fbUrl }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://snapsave.app/', 'User-Agent': FB_UA, 'Origin': 'https://snapsave.app' },
-            timeout: 20000,
-          });
-          const html = r?.data || '';
-          const hd = html.match(/href="(https:\/\/video[^"]+\.mp4[^"]*)"/)?.[1];
-          const sd = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
-          const url = hd || sd;
-          if (!url) throw new Error('no url');
-          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
-        },
-
-        // 4. Getfvid
-        async () => {
-          const r = await axios.post('https://www.getfvid.com/downloader', new URLSearchParams({ url: fbUrl }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.getfvid.com/', 'User-Agent': FB_UA },
-            timeout: 20000,
-          });
-          const html = r?.data || '';
-          const hd = html.match(/href="(https:\/\/[^"]+)"[^>]*>HD/)?.[1];
-          const sd = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
-          const url = hd || sd;
-          if (!url) throw new Error('no url');
-          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
-        },
-
-        // 5. Fdown.net
-        async () => {
-          const r = await axios.post('https://fdown.net/download.php', new URLSearchParams({ URLz: fbUrl }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://fdown.net/', 'User-Agent': FB_UA },
-            timeout: 20000,
-          });
-          const html = r?.data || '';
-          const hd = html.match(/id="hdlink"[^>]*href="([^"]+)"/)?.[1];
-          const sd = html.match(/id="sdlink"[^>]*href="([^"]+)"/)?.[1] || html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
-          const url = hd || sd;
-          if (!url) throw new Error('no url');
-          return { sd: url, hd: hd || url, title: 'Facebook Video', thumbnail: null };
-        },
-
-        // 6. SaveFrom worker
-        async () => {
-          const r = await axios.get(`https://worker.sf-tools.com/savefrom.php?sf_url=${enc}&lang=en`, {
-            headers: { 'User-Agent': FB_UA, 'Referer': 'https://en.savefrom.net/' },
-            timeout: 20000,
-          });
-          const d = r?.data;
-          const links = d?.[0]?.url || [];
-          const hd = links.find(l => l?.type?.includes('mp4') && parseInt(l?.id) >= 720)?.url;
-          const sd = links.find(l => l?.type?.includes('mp4'))?.url;
-          const url = hd || sd;
-          if (!url) throw new Error('no url');
-          return { sd: url, hd: hd || url, title: d?.[0]?.title || 'Facebook Video', thumbnail: d?.[0]?.thumb || null };
-        },
-
-        // 7. SnapTik (fb support)
-        async () => {
-          const r = await axios.post('https://snaptik.app/action2.php', new URLSearchParams({ url: fbUrl, lang: 'en' }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://snaptik.app/', 'User-Agent': FB_UA },
-            timeout: 20000,
-          });
-          const html = r?.data?.data || r?.data || '';
-          const url = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/)?.[1];
-          if (!url) throw new Error('no url');
-          return { sd: url, hd: url, title: 'Facebook Video', thumbnail: null };
-        },
-
-        // 8. LocoDownloader
-        async () => {
-          const r = await axios.post('https://locodownloader.com/api/single/autolink', new URLSearchParams({ url: fbUrl }), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://locodownloader.com/', 'User-Agent': FB_UA },
-            timeout: 20000,
-          });
-          const links = r?.data?.data?.links || r?.data?.links || [];
-          const hd = links.find(l => l.quality === 'HD' || l.label?.includes('HD'))?.url;
-          const sd = links.find(l => l.quality === 'SD')?.url || links[0]?.url;
-          if (!sd) throw new Error('no url');
-          return { sd, hd: hd || sd, title: r?.data?.data?.title || 'Facebook Video', thumbnail: r?.data?.data?.thumbnail || null };
-        },
-      ];
-
-      const apiNames = ['Cobalt', 'SaveVid', 'Snapsave', 'Getfvid', 'Fdown', 'SaveFrom', 'SnapTik', 'LocoDownloader'];
-      let fbData = null;
-      let usedApi = 'unknown';
-
-      for (let i = 0; i < fbApis.length; i++) {
+        // Try yt-dlp first
         try {
-          const result = await fbApis[i]();
-          if (result?.sd || result?.hd) {
-            fbData = result;
-            usedApi = apiNames[i] || `API${i + 1}`;
-            console.log(`[FB DL] ✅ ${usedApi}`);
-            break;
-          }
-        } catch (e) {
-          console.log(`[FB DL] ❌ ${apiNames[i] || `API${i + 1}`}: ${e.message?.substring(0, 80)}`);
+          const filePath = await runYtDlp(q);
+          videoTitle  = path.basename(filePath, path.extname(filePath));
+          videoBuffer = fs.readFileSync(filePath);
+          console.log('[FB] yt-dlp OK, size:', videoBuffer.length);
+        } catch (ytErr) {
+          console.log('[FB] yt-dlp failed:', ytErr.message?.substring(0, 100));
+          cleanup();
         }
-      }
 
-      if (!fbData?.sd && !fbData?.hd) {
+        // Try APIs if yt-dlp failed
+        if (!videoBuffer) {
+          let apiUrl = null;
+          for (let i = 0; i < apiChain.length; i++) {
+            try {
+              apiUrl = await apiChain[i]();
+              if (apiUrl) { console.log(`[FB] API OK: ${apiNames[i]}`); break; }
+            } catch (e) {
+              console.log(`[FB] API fail ${apiNames[i]}: ${e.message?.substring(0, 60)}`);
+            }
+          }
+          if (!apiUrl) throw new Error('All methods failed');
+
+          // Stream download to temp file
+          const tmpFile = path.join(os.tmpdir(), `fbapi_${Date.now()}.mp4`);
+          const writer = fs.createWriteStream(tmpFile);
+          const dlRes = await axios({ url: apiUrl, method: 'GET', responseType: 'stream', timeout: 60000,
+            headers: { 'User-Agent': FB_UA } });
+          await new Promise((res, rej) => { dlRes.data.pipe(writer); writer.on('finish', res); writer.on('error', rej); });
+          videoBuffer = fs.readFileSync(tmpFile);
+          fs.unlinkSync(tmpFile);
+        }
+
+        if (!videoBuffer || videoBuffer.length < 5000) throw new Error('Video file too small or empty');
+
+        // Delete status message
+        if (statusMsg?.key) {
+          try { await sock.sendMessage(chat, { delete: statusMsg.key }); } catch {}
+        }
+
+        // Send video
+        await sock.sendMessage(chat, {
+          video: videoBuffer,
+          mimetype: 'video/mp4',
+          caption: `📘 *${videoTitle}*\n\n${cfg.footer}`,
+        }, { quoted: msg });
+
+        cleanup();
+        await m.react('✅');
+
+      } catch (e) {
+        cleanup();
+        console.log('[FB] Final error:', e.message);
+        if (statusMsg?.key) {
+          try { await sock.sendMessage(chat, { delete: statusMsg.key }); } catch {}
+        }
         await m.react('❌');
         return m.reply(`❌ Facebook video download failed. Please check the link or try again later.\n\n${cfg.footer}`);
       }
-
-      const { sd, hd, title, thumbnail } = fbData;
-
-      try {
-        if (thumbnail) {
-          await sock.sendMessage(chat, {
-            image: { url: thumbnail },
-            caption: `📘 *Facebook Downloader*\n\n📝 *${title || 'Facebook Video'}*\n✅ Found via ${usedApi}\n\n*Reply with:*\n*1.1* — SD Video\n*1.2* — HD Video\n*2.1* — Audio\n*2.2* — Document\n*2.3* — Voice\n\n${cfg.footer}`,
-          }, { quoted: msg });
-        } else {
-          throw new Error('no thumbnail');
-        }
-      } catch {
-        await sock.sendMessage(chat, {
-          text: `📘 *Facebook Downloader*\n\n📝 *${title || 'Facebook Video'}*\n✅ Found via ${usedApi}\n\n*Reply with:*\n*1.1* — SD Video\n*1.2* — HD Video\n*2.1* — Audio\n\n${cfg.footer}`,
-        }, { quoted: msg });
-      }
-      await m.react('✅');
-
-      const listener = sock.ev.on('messages.upsert', async (upsert) => {
-        const reply = upsert.messages[0];
-        if (!reply?.message) return;
-        const repText = reply.message?.conversation || reply.message?.extendedTextMessage?.text;
-        const replyJid = reply.key.remoteJid;
-        if (replyJid !== chat) return;
-        if (repText === '1.1') {
-          await sock.sendMessage(chat, { video: { url: sd }, caption: `*SD Video*\n\n${cfg.footer}` }, { quoted: reply });
-          sock.ev.off('messages.upsert', listener);
-        } else if (repText === '1.2') {
-          await sock.sendMessage(chat, { video: { url: hd || sd }, caption: `*HD Video*\n\n${cfg.footer}` }, { quoted: reply });
-          sock.ev.off('messages.upsert', listener);
-        } else if (repText === '2.1') {
-          await sock.sendMessage(chat, { audio: { url: sd }, mimetype: 'audio/mpeg' }, { quoted: reply });
-          sock.ev.off('messages.upsert', listener);
-        } else if (repText === '2.2') {
-          await sock.sendMessage(chat, { document: { url: sd }, mimetype: 'video/mp4', fileName: 'FB_Video.mp4', caption: cfg.footer }, { quoted: reply });
-          sock.ev.off('messages.upsert', listener);
-        } else if (repText === '2.3') {
-          try {
-            const _ax = require('axios');
-            const _ar = await _ax.get(sd, { responseType: 'arraybuffer', timeout: 20000 });
-            await sock.sendMessage(chat, { audio: Buffer.from(_ar.data), mimetype: 'audio/mpeg', ptt: true }, { quoted: reply });
-          } catch {
-            await sock.sendMessage(chat, { audio: { url: sd }, mimetype: 'audio/mpeg', ptt: true }, { quoted: reply });
-          }
-          sock.ev.off('messages.upsert', listener);
-        }
-      });
-      setTimeout(() => sock.ev.off('messages.upsert', listener), 120000);
     }
+
 
     // ── GDRIVE ────────────────────────────────────────
     if (['gdrive', 'gdrive2', 'googledrive'].includes(cmd)) {

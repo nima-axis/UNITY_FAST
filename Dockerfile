@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-# Install dependencies including git
+# Install system dependencies
 RUN apk add --no-cache \
     ffmpeg \
     git \
@@ -12,25 +12,25 @@ RUN apk add --no-cache \
     jpeg-dev \
     pango-dev \
     giflib-dev \
-    ttf-dejavu
+    ttf-dejavu \
+    curl \
+    bash
 
-# Ensure pip3 is available on any platform/base image
+# Upgrade pip and install latest yt-dlp
 RUN python3 -m ensurepip --upgrade 2>/dev/null || true && \
-    python3 -m pip install --upgrade pip 2>/dev/null || true && \
-    (command -v pip3 || ln -sf $(command -v pip) /usr/local/bin/pip3 || \
-     ln -sf $(python3 -c "import sys; print(sys.executable.replace('python3','pip3'))") /usr/local/bin/pip3 2>/dev/null || true)
+    python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null || true && \
+    pip3 install -U yt-dlp --break-system-packages && \
+    yt-dlp --version
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install --production --legacy-peer-deps
-RUN pip3 install --upgrade yt-dlp --break-system-packages
+RUN npm install --legacy-peer-deps
 
 COPY . .
 
-RUN mkdir -p temp logs database/sessions src/media
+RUN mkdir -p temp logs database/sessions database/temp src/media
 
 EXPOSE 3000
 
-# CMD ["node", "start.js"]
-CMD ["node", "connect.js"]
+CMD ["node", "start.js"]

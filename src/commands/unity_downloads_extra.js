@@ -380,47 +380,69 @@ module.exports = {
         });
       }
       await m.react('⏳');
+      await m.react('⏳');
 
-      const FB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+      const FB_UA = 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
-      // ── Step 1: Resolve short/share/reel links ─────────────
+      // ── Step 1: Resolve share/reel links + try direct CDN ──
       let fbUrl = q;
-      try {
-        const res0 = await axios.get(q, {
-          maxRedirects: 10,
-          timeout: 12000,
-          headers: { 'User-Agent': FB_UA, 'Accept-Language': 'en-US,en;q=0.9' },
-          validateStatus: () => true,
-        });
-        // Get final redirect URL
-        const rUrl = res0?.request?.res?.responseUrl
-          || res0?.request?.responseURL
-          || res0?.config?.url
-          || q;
-        if (rUrl && rUrl.includes('facebook.com') && rUrl !== q) {
-          fbUrl = rUrl.split('?')[0]; // strip tracking params
-          console.log(`[FB DL] 🔗 Resolved → ${fbUrl}`);
+
+      const tryResolveFb = async (inputUrl) => {
+        const mbasicUrl = inputUrl.replace('www.facebook.com', 'mbasic.facebook.com').replace('m.facebook.com', 'mbasic.facebook.com');
+        for (const tryUrl of [mbasicUrl, inputUrl]) {
+          try {
+            const res = await axios.get(tryUrl, {
+              maxRedirects: 10, timeout: 12000,
+              headers: {
+                'User-Agent': FB_UA,
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8',
+              },
+              validateStatus: () => true,
+            });
+            const finalUrl = res?.request?.res?.responseUrl || res?.request?.responseURL || tryUrl;
+            if (finalUrl && finalUrl.includes('facebook.com') && finalUrl !== q) {
+              fbUrl = finalUrl.split('?')[0];
+              console.log('[FB DL] Resolved ->', fbUrl.substring(0, 80));
+            }
+            const html = typeof res?.data === 'string' ? res.data : '';
+            if (!html) continue;
+            // mbasic direct video href
+            const directVid = html.match(/href="(https:\/\/video\.xx\.fbcdn\.net[^"]+)"/)?.[1]
+              || html.match(/href="(https:\/\/[^"]*fbcdn\.net\/v\/[^"]+)"/)?.[1];
+            if (directVid) return { directUrl: directVid.replace(/&amp;/g, '&') };
+            // og:video / playable_url
+            const ogVid = html.match(/property="og:video:secure_url"[^>]*content="([^"]+)"/)?.[1]
+              || html.match(/property="og:video"[^>]*content="([^"]+)"/)?.[1]
+              || html.match(/"playable_url_quality_hd":"([^"]+)"/)?.[1]
+              || html.match(/"playable_url":"([^"]+)"/)?.[1];
+            if (ogVid && (ogVid.includes('fbcdn') || ogVid.includes('.mp4'))) {
+              return { directUrl: ogVid.replace(/&amp;/g, '&').replace(/\\/g, '') };
+            }
+          } catch (e) {
+            console.log('[FB DL] resolve try failed:', e.message?.substring(0, 50));
+          }
         }
-        // Try og:video direct CDN URL from HTML
-        const html = typeof res0?.data === 'string' ? res0.data.substring(0, 50000) : '';
-        const ogVid = html.match(/property="og:video:secure_url"[^>]*content="([^"]+)"/)?.[1]
-          || html.match(/property="og:video:url"[^>]*content="([^"]+)"/)?.[1]
-          || html.match(/property="og:video"[^>]*content="([^"]+)"/)?.[1];
-        if (ogVid && ogVid.includes('.mp4')) {
-          const directUrl = ogVid.replace(/&amp;/g, '&');
-          console.log(`[FB DL] 🎯 og:video CDN hit`);
+        return null;
+      };
+
+      const directResult = await tryResolveFb(q);
+      if (directResult?.directUrl) {
+        console.log('[FB DL] Direct CDN send');
+        try {
           await sock.sendMessage(chat, {
-            video: { url: directUrl },
+            video: { url: directResult.directUrl },
             caption: `📘 *Facebook Video*\n\n${cfg.footer}`,
           }, { quoted: msg });
           return m.react('✅');
+        } catch (e) {
+          console.log('[FB DL] Direct send failed, trying APIs:', e.message?.substring(0, 50));
         }
-      } catch (e) {
-        console.log(`[FB DL] ⚠️ Resolve: ${e.message?.substring(0, 60)}`);
       }
 
       // ── Step 2: Multi-API fallback ─────────────────────────
       const enc = encodeURIComponent(fbUrl);
+
 
       const fbApis = [
         // 1. Cobalt (multiple instances, updated 2026 body)

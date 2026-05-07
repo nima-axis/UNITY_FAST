@@ -1,294 +1,278 @@
 'use strict';
 /**
- * UNITY-MD — .playsong / .playaudio / .playvideo commands
- * ─────────────────────────────────────────────────────────────
- * Owner-only commands. Silently ignored for non-owners.
+ * UNITY-MD — .audioplay / .videoplay commands
+ * ──────────────────────────────────────────────────────────────
+ * .audioplay  — bot connect කරල sender ට voice call එකක් ගෙනවිත්
+ *               quoted / attached audio file එක call එකේදී play කරනවා.
+ *               Audio ඉවර වූ විට call automatically cut වෙනවා.
+ *               Group හෝ inbox — ඕනෑම user කෙනෙකුට.
  *
- * .playsong / .playaudio
- *   Reply to an audio/voice msg  →  sends to sender (or given number)
- *   .playsong 947XXXXXXX         →  sends to that number
+ * .videoplay  — ඒ වගේමයි, video call හරහා.
  *
- * .playvideo
- *   Reply to a video msg         →  sends to sender (or given number)
- *   .playvideo 947XXXXXXX        →  sends to that number
- *
- * Flow (all via message-edit on the status bubble):
- *   📞 Calling...
- *   → edit → 🎵 Playing audio... / 🎬 Playing video...
- *   → edit → ✅ Done!
- * ─────────────────────────────────────────────────────────────
+ * Usage:
+ *   .audioplay              (reply to audio — calls the sender)
+ *   .audioplay 94XXXXXXXXX  (calls a specific number)
+ *   .videoplay              (reply to video — video calls the sender)
+ *   .videoplay 94XXXXXXXXX
+ * ──────────────────────────────────────────────────────────────
  */
 
-const cfg         = require('../../config');
-const fs          = require('fs-extra');
-const { exec }    = require('child_process');
+const cfg  = require('../../config');
+const fs   = require('fs-extra');
+const { exec } = require('child_process');
 const { tmpFile } = require('./helper');
-const { getLang } = require('../lang');
 
-// ── Delay helper ──────────────────────────────────────────────
-const delay = (ms) => new Promise(r => setTimeout(r, ms));
-
-// ── Localised strings ─────────────────────────────────────────
-const STR = {
-  owner_only: {
-    en: '👑 *Owner only command.*',
-    si: '👑 *Owner විතරයි.*',
-    ta: '👑 *Owner மட்டும்.*',
-  },
-  no_media_audio: {
-    en: 'Reply to an *audio / voice message* with this command.',
-    si: 'Audio / voice message එකක් *reply* කරල command ගහන්න.',
-    ta: 'Audio / voice message-ஐ *reply* செய்து command கொடுங்கள்.',
-  },
-  no_media_video: {
-    en: 'Reply to a *video message* with this command.',
-    si: 'Video message එකක් *reply* කරල command ගහන්න.',
-    ta: 'Video message-ஐ *reply* செய்து command கொடுங்கள்.',
-  },
-  example: {
-    en: 'Example',
-    si: 'උදාහරණ',
-    ta: 'எடுத்துக்காட்டு',
-  },
-  diff_number: {
-    en: 'Different number',
-    si: 'වෙනත් number',
-    ta: 'வேறு number',
-  },
-  calling: {
-    en: '📞 *Calling...*',
-    si: '📞 *Call කරනවා...*',
-    ta: '📞 *Call செய்கிறது...*',
-  },
-  playing_audio: {
-    en: '🎵 *Playing audio...*',
-    si: '🎵 *Audio play කරනවා...*',
-    ta: '🎵 *Audio play செய்கிறது...*',
-  },
-  playing_video: {
-    en: '🎬 *Playing video...*',
-    si: '🎬 *Video play කරනවා...*',
-    ta: '🎬 *Video play செய்கிறது...*',
-  },
-  done_audio: {
-    en: '✅ *Audio play done!*',
-    si: '✅ *Audio play ඉවරයි!*',
-    ta: '✅ *Audio play முடிந்தது!*',
-  },
-  done_video: {
-    en: '✅ *Video play done!*',
-    si: '✅ *Video play ඉවරයි!*',
-    ta: '✅ *Video play முடிந்தது!*',
-  },
-  error: {
-    en: '❌ *Failed:*',
-    si: '❌ *බැරි වුණා:*',
-    ta: '❌ *தோல்வி:*',
-  },
-  you_are_owner: {
-    en: '👑 You are the owner.',
-    si: '👑 ඔයා owner.',
-    ta: '👑 நீங்கள் owner.',
-  },
+// ── Silent logger ─────────────────────────────────────────────
+const silentLogger = {
+  info: () => {}, debug: () => {}, trace: () => {},
+  error: () => {}, warn: () => {},
 };
+silentLogger.child = () => silentLogger;
 
-function s(key, lang) {
-  return STR[key]?.[lang] || STR[key]?.['en'] || key;
-}
-
-// ── Resolve target JID ────────────────────────────────────────
+// ── Utility: resolve target JID ──────────────────────────────
+// Group: call the person who sent the command (m.sender = individual JID)
+// Inbox: call that same person
+// Explicit number arg: use that number
 function resolveTarget(m) {
-  if (m.args?.[0]) {
+  if (m.args[0]) {
     const num = m.args[0].replace(/[^0-9]/g, '');
     if (num.length >= 7) return num + '@s.whatsapp.net';
   }
+  // m.sender is always the individual JID regardless of group/inbox
   return m.sender;
 }
 
-// ── Download quoted / own media ───────────────────────────────
-async function downloadMedia(sock, m, allowedTypes) {
+// ── Utility: download quoted / attached media ─────────────────
+async function downloadMedia(m, allowedTypes) {
+  const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+
+  // Method 1: m.quoted (project's quoted wrapper)
   const quoted = m.quoted;
   if (quoted) {
     const qMsg = quoted.message;
     for (const type of allowedTypes) {
       if (qMsg?.[type]) {
-        const buf = await sock.downloadMediaMessage({ message: qMsg, key: quoted.key });
-        return { buf, type };
+        try {
+          const buf = await downloadMediaMessage(
+            { message: qMsg, key: quoted.key },
+            'buffer', {}, { logger: silentLogger }
+          );
+          if (buf) return { buf, type };
+        } catch {}
       }
     }
   }
-  for (const type of allowedTypes) {
-    if (m.message?.[type]) {
-      const buf = await sock.downloadMediaMessage(m.msg);
-      return { buf, type };
+
+  // Method 2: contextInfo quotedMessage (raw Baileys)
+  const ctx = m.msg?.message?.extendedTextMessage?.contextInfo;
+  if (ctx?.quotedMessage) {
+    const qMsg = ctx.quotedMessage;
+    for (const type of allowedTypes) {
+      if (qMsg?.[type]) {
+        try {
+          const buf = await downloadMediaMessage(
+            { message: qMsg, key: { remoteJid: m.chat, id: ctx.stanzaId, participant: ctx.participant } },
+            'buffer', {}, { logger: silentLogger }
+          );
+          if (buf) return { buf, type };
+        } catch {}
+      }
     }
   }
+
+  // Method 3: own message media
+  const ownMsg = m.msg?.message || m.message;
+  for (const type of allowedTypes) {
+    if (ownMsg?.[type]) {
+      try {
+        const buf = await downloadMediaMessage(
+          m.msg, 'buffer', {}, { logger: silentLogger }
+        );
+        if (buf) return { buf, type };
+      } catch {}
+    }
+  }
+
   return null;
 }
 
-// ── ffmpeg: any audio → mp3 ───────────────────────────────────
-function toMp3(src) {
-  const out = tmpFile('mp3');
-  return new Promise((res, rej) =>
-    exec(`ffmpeg -y -i "${src}" -vn -ar 44100 -ac 2 -b:a 128k "${out}" 2>/dev/null`,
-      (e) => (e ? rej(e) : res(out)))
-  );
+// ── Utility: make a WhatsApp call (voice or video) ─────────────
+async function makeCall(sock, targetJid, isVideo = false) {
+  try {
+    if (typeof sock.call === 'function') {
+      const callResult = await sock.call([targetJid], { video: isVideo });
+      return callResult?.id || callResult?.[0]?.id || null;
+    }
+    const callId = require('crypto').randomBytes(8).toString('hex').toUpperCase();
+    await sock.relayMessage(targetJid, {
+      call: { callKey: Buffer.from(callId, 'hex') }
+    }, {});
+    return callId;
+  } catch {
+    return null;
+  }
 }
 
-// ── ffmpeg: any video → mp4 ───────────────────────────────────
-function toMp4(src) {
-  const out = tmpFile('mp4');
-  return new Promise((res, rej) =>
-    exec(`ffmpeg -y -i "${src}" -c:v libx264 -c:a aac -movflags +faststart "${out}" 2>/dev/null`,
-      (e) => (e ? rej(e) : res(out)))
-  );
+// ── Utility: reject / end a call ─────────────────────────────
+async function endCall(sock, targetJid, callId) {
+  try {
+    if (callId && typeof sock.rejectCall === 'function') {
+      await sock.rejectCall(callId, targetJid);
+    }
+  } catch {}
+}
+
+// ── Utility: stream audio into call ──────────────────────────
+async function streamAudioToCall(sock, targetJid, callId, audioBuf) {
+  if (typeof sock.sendCallAudio === 'function') {
+    try {
+      await sock.sendCallAudio(callId, targetJid, audioBuf);
+      return true;
+    } catch {}
+  }
+  return false;
+}
+
+// ── Utility: get audio duration via ffprobe ───────────────────
+function getAudioDuration(filePath) {
+  return new Promise((resolve) => {
+    exec(
+      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
+      (err, stdout) => {
+        const dur = parseFloat(stdout?.trim());
+        resolve(isNaN(dur) ? 30 : dur);
+      }
+    );
+  });
+}
+
+// ── Utility: convert audio to opus ───────────────────────────
+async function toOpus(inputPath) {
+  const outPath = tmpFile('opus');
+  return new Promise((resolve, reject) => {
+    exec(
+      `ffmpeg -y -i "${inputPath}" -c:a libopus -b:a 64k -ar 48000 -ac 1 "${outPath}"`,
+      (err) => { if (err) reject(err); else resolve(outPath); }
+    );
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
-// MODULE
+// MAIN MODULE
 // ─────────────────────────────────────────────────────────────
 module.exports = {
-  commands: ['playsong', 'playaudio', 'playvideo'],
-  description: 'Owner only: call target & play audio/video',
+  commands: ['audioplay', 'videoplay'],
+  // No access restriction — any user in group or inbox can use this
+  description: 'Voice / video call eka hadala audio/video play karanna',
 
   async run({ sock, m }) {
     const cmd     = m.command;
-    const isVideo = cmd === 'playvideo';
-    const lang    = await getLang(m.sessionOwner);
-
-    // ── 1. Owner check — silent skip for non-owners ───────────
-    if (!m.isOwner) return;
-
-    const target    = resolveTarget(m);
+    const isVideo = cmd === 'videoplay';
+    const target  = resolveTarget(m);
     const targetNum = target.split('@')[0];
-    const isSelf    = target === m.sender;
 
-    // ── 2. Media download ─────────────────────────────────────
+    // ── 1. Download the media file ────────────────────────────
+    await m.react('⏳');
+
     const allowedTypes = isVideo
       ? ['videoMessage', 'documentMessage']
       : ['audioMessage', 'documentMessage', 'videoMessage'];
 
-    const media = await downloadMedia(sock, m, allowedTypes);
+    const media = await downloadMedia(m, allowedTypes);
 
     if (!media) {
       await m.react('❌');
-      const hint = isVideo ? s('no_media_video', lang) : s('no_media_audio', lang);
+      const hint = isVideo
+        ? 'video message එකක් reply කරන්න'
+        : 'audio/voice message එකක් reply කරන්න';
       return m.reply(
         `📌 *Usage:* *.${cmd}*\n\n` +
-        `${hint}\n\n` +
-        `*${s('example', lang)}:*\n` +
-        `➤ Reply to ${isVideo ? 'video' : 'audio/voice'} msg → \`.${cmd}\`\n` +
-        `➤ ${s('diff_number', lang)}: \`.${cmd} 947XXXXXXX\`\n\n` +
-        cfg.footer
+        `${hint} *.${cmd}* command ගහන්න.\n\n` +
+        `*Example:*\n` +
+        `➤ Voice/audio message reply කරල \`.${cmd}\`\n` +
+        `➤ Specific number: \`.${cmd} 94XXXXXXXXX\`\n\n` +
+        `${cfg.footer}`
       );
     }
 
-    // ── 3. Send initial status message: "Calling..." ──────────
-    const statusMsg = await sock.sendMessage(m.chat, {
-      text:
-        `${s('calling', lang)}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `📱 *To:* +${targetNum}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        cfg.footer,
-    });
-    const statusKey = statusMsg?.key;
-
-    // ── Helper: edit the status bubble ────────────────────────
-    const editStatus = async (text) => {
-      try {
-        await sock.sendMessage(m.chat, { text, edit: statusKey });
-      } catch {}
-    };
-
-    // ── 4. Save raw temp ──────────────────────────────────────
-    const rawExt  = isVideo ? 'mp4' : 'mp3';
-    const tempRaw = tmpFile(rawExt);
-    await fs.writeFile(tempRaw, media.buf);
-    let tempConverted = null;
+    // ── 2. Save media to temp file ────────────────────────────
+    const ext = isVideo ? 'mp4' : 'mp3';
+    const tempInput = tmpFile(ext);
+    await fs.writeFile(tempInput, media.buf);
 
     try {
-      // ── 5. Try WhatsApp call (best effort) ────────────────
-      let callId = null;
-      try {
-        if (typeof sock.call === 'function') {
-          const res = await Promise.race([
-            sock.call([target], { video: isVideo }),
-            delay(6000).then(() => null),
-          ]);
-          callId = res?.id || res?.[0]?.id || null;
-        }
-      } catch {}
-
-      // ── 6. Edit → "Playing..." ────────────────────────────
-      await delay(1500);
-      const playingText = isVideo ? s('playing_video', lang) : s('playing_audio', lang);
-      await editStatus(
-        `${playingText}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `📱 *To:* +${targetNum}\n` +
-        (isSelf ? `👑 ${s('you_are_owner', lang)}\n` : '') +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        cfg.footer
+      // ── 3. Notify and make call ───────────────────────────
+      await m.reply(
+        `📞 *${isVideo ? 'Video' : 'Voice'} Call* ගෙනෙනවා...\n\n` +
+        `📱 Number: +${targetNum}\n` +
+        `🎵 Media ready ✅\n\n` +
+        `${cfg.footer}`
       );
 
-      // ── 7. Convert + send media ───────────────────────────
-      let sendBuf;
-      try {
+      const callId = await makeCall(sock, target, isVideo);
+
+      if (!callId) {
+        // Fallback: send as message
+        await m.react('⚠️');
         if (isVideo) {
-          tempConverted = await toMp4(tempRaw);
+          await sock.sendMessage(target, {
+            video: media.buf,
+            caption: `🎬 *Video Play*\n\nCall streaming supported නෑ, message හරහා.\n\n${cfg.footer}`,
+            gifPlayback: false,
+          });
         } else {
-          tempConverted = await toMp3(tempRaw);
+          await sock.sendMessage(target, { audio: media.buf, mimetype: 'audio/mp4', ptt: true });
+          await sock.sendMessage(m.chat, {
+            text: `⚠️ *Call streaming support නෑ*\n\n+${targetNum} ට audio voice note හරහා send කළා.\n\n${cfg.footer}`,
+          });
         }
-        sendBuf = await fs.readFile(tempConverted);
-      } catch {
-        sendBuf = media.buf;
+        await fs.remove(tempInput).catch(() => {});
+        return;
       }
 
-      if (isVideo) {
-        await sock.sendMessage(target, {
-          video: sendBuf,
-          caption: `🎬 *Video Play* — UNITY-MD\n\n${cfg.footer}`,
-          gifPlayback: false,
-        });
-      } else {
-        await sock.sendMessage(target, {
-          audio: sendBuf,
-          mimetype: 'audio/mpeg',
-          ptt: true,
-        });
+      // ── 4. Stream audio into call ─────────────────────────
+      await m.react('📞');
+      await new Promise(r => setTimeout(r, 3000)); // wait for answer
+
+      const duration = await getAudioDuration(tempInput);
+
+      let streamFile = tempInput;
+      if (!isVideo) {
+        try { streamFile = await toOpus(tempInput); } catch { streamFile = tempInput; }
       }
 
-      // ── 8. End call if we got a callId ────────────────────
-      if (callId) {
-        try {
-          if (typeof sock.rejectCall === 'function') {
-            await sock.rejectCall(callId, target);
-          }
-        } catch {}
-      }
+      const streamBuf = await fs.readFile(streamFile);
+      const streamed  = await streamAudioToCall(sock, target, callId, streamBuf);
 
-      // ── 9. Edit → "Done!" ─────────────────────────────────
-      await delay(1000);
-      const doneText = isVideo ? s('done_video', lang) : s('done_audio', lang);
-      await editStatus(
-        `${doneText}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `📱 *To:* +${targetNum}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━\n` +
-        cfg.footer
-      );
+      // Wait for duration then hang up
+      await new Promise(r => setTimeout(r, Math.min(duration * 1000 + 1000, 180000)));
+      await endCall(sock, target, callId);
+
+      if (!streamed) {
+        // sendCallAudio not available — also send as message
+        if (isVideo) {
+          await sock.sendMessage(target, {
+            video: media.buf,
+            caption: `🎬 *Video* — call play supported නෑ, message හරහා.\n\n${cfg.footer}`,
+          });
+        } else {
+          await sock.sendMessage(target, { audio: media.buf, mimetype: 'audio/mp4', ptt: true });
+        }
+      }
 
       await m.react('✅');
+      await m.reply(
+        `✅ *${isVideo ? 'Video' : 'Audio'} Play ඉවරයි!*\n\n` +
+        `📞 +${targetNum}\n` +
+        `⏱️ Duration: ${Math.round(duration)}s\n\n` +
+        `${cfg.footer}`
+      );
 
     } catch (e) {
       await m.react('❌');
-      await editStatus(
-        `${s('error', lang)} ${e.message?.substring(0, 120)}\n\n${cfg.footer}`
-      );
+      await m.reply(`❌ *Error:* ${e.message}\n\n${cfg.footer}`);
     } finally {
-      await fs.remove(tempRaw).catch(() => {});
-      if (tempConverted) await fs.remove(tempConverted).catch(() => {});
+      await fs.remove(tempInput).catch(() => {});
     }
   },
 };

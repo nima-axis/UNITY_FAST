@@ -351,89 +351,6 @@ async function getStats(days = 1) {
   return Stats.find({ date: { $in: dates } }).sort({ date: -1 });
 }
 
-// ── useMongoDBAuthState — Baileys auth state stored in MongoDB ─
-// Compatible with @whiskeysockets/baileys v6.x
-async function useMongoDBAuthState(sessionId = 'session') {
-  const { proto, initAuthCreds, BufferJSON } = require('@whiskeysockets/baileys');
-
-  // ── helpers ──────────────────────────────────────────────────
-  const KEY_MAP = {
-    'pre-key':        'preKeys',
-    'session':        'sessions',
-    'sender-key':     'senderKeys',
-    'app-state-sync-key':       'appStateSyncKeys',
-    'app-state-sync-version':   'appStateSyncVersions',
-    'receiver-key-bundle':      'receiverKeyBundles',
-    'sender-key-memory':        'senderKeyMemory',
-  };
-
-  function encode(obj) {
-    return JSON.stringify(obj, BufferJSON.replacer);
-  }
-  function decode(str) {
-    try { return JSON.parse(str, BufferJSON.reviver); } catch { return str; }
-  }
-
-  // ── load creds ───────────────────────────────────────────────
-  const credsDoc = await AuthState.findById(`${sessionId}:creds`).lean();
-  const creds    = credsDoc?.data ? decode(credsDoc.data) : initAuthCreds();
-
-  // ── state object ─────────────────────────────────────────────
-  const state = {
-    creds,
-    keys: {
-      get: async (type, ids) => {
-        const dbKey = KEY_MAP[type] || type;
-        const result = {};
-        await Promise.all(
-          ids.map(async (id) => {
-            const doc = await AuthState.findById(`${sessionId}:${dbKey}:${id}`).lean();
-            if (!doc?.data) return;
-            let val = decode(doc.data);
-            if (type === 'app-state-sync-key' && val) {
-              val = proto.Message.AppStateSyncKeyData.fromObject(val);
-            }
-            result[id] = val;
-          })
-        );
-        return result;
-      },
-      set: async (data) => {
-        const ops = [];
-        for (const [type, ids] of Object.entries(data)) {
-          const dbKey = KEY_MAP[type] || type;
-          for (const [id, val] of Object.entries(ids || {})) {
-            const docId = `${sessionId}:${dbKey}:${id}`;
-            if (val) {
-              ops.push(
-                AuthState.findByIdAndUpdate(
-                  docId,
-                  { $set: { data: encode(val) } },
-                  { upsert: true }
-                )
-              );
-            } else {
-              ops.push(AuthState.findByIdAndDelete(docId));
-            }
-          }
-        }
-        await Promise.all(ops).catch(() => {});
-      },
-    },
-  };
-
-  // ── saveCreds ────────────────────────────────────────────────
-  const saveCreds = async () => {
-    await AuthState.findByIdAndUpdate(
-      `${sessionId}:creds`,
-      { $set: { data: encode(state.creds) } },
-      { upsert: true }
-    );
-  };
-
-  return { state, saveCreds };
-}
-
 module.exports = {
   connect,
   User, Group, Stats, Audit, JadiBot, Schedule, AuthState, BotConfig,
@@ -447,5 +364,4 @@ module.exports = {
   resetWarns,
   getStats,
   setFirstBootTime,
-  useMongoDBAuthState,
 };

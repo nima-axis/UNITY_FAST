@@ -1273,12 +1273,6 @@ class MusicDownloader {
     const apiMethods = [
       // ── Cobalt first — most reliable 2026 (moved to position 1) ──
       { name: 'Cobalt-fresh',   fn: () => (async () => { for (const inst of ['https://api.cobalt.tools','https://cobalt.oisd.nl','https://cobalt.catvibers.me']) { try { const r = await axios.post(`${inst}/`, { url: input, downloadMode: 'audio', audioFormat: 'mp3', audioBitrate: '128' }, { headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, timeout: 15000 }); if (r?.data?.url) return this._dlUrl(r.data.url); } catch {} } throw new Error('cobalt: all failed'); })() },
-      // ── 2026-05 fresh APIs ────────────────────────────────
-      { name: 'Y2api-mp3',       fn: () => this._axGet(`https://api.y2api.net/api/v1/mp3?url=${encodeURIComponent(input)}`).then(r => { const dl = r?.data?.url || r?.data?.download_url; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
-      { name: 'Ytapi-pw-mp3',    fn: () => this._axGet(`https://ytapi.pw/mp3?url=${encodeURIComponent(input)}`).then(r => { const dl = r?.data?.url || r?.data?.link; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
-      { name: 'Yt-dlapi-mp3',    fn: () => this._axGet(`https://yt-dlapi.vercel.app/api/mp3?url=${encodeURIComponent(input)}`).then(r => { const dl = r?.data?.url || r?.data?.download; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
-      { name: 'Ytdlapi-xyz-mp3', fn: () => this._axGet(`https://ytdlapi.xyz/api/ytmp3?url=${encodeURIComponent(input)}`).then(r => { const dl = r?.data?.download_url || r?.data?.url; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
-      { name: 'Zydl-mp3',        fn: () => this._axGet(`https://api.zydl.net/v1/youtube/mp3?url=${encodeURIComponent(input)}`).then(r => { const dl = r?.data?.url || r?.data?.link; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
       // ── Ultra-fresh APIs (added 2026-04) ───────────────────
       { name: 'NexOracle-mp3',   fn: () => this._axGet(`https://api.nexoracle.com/downloader/yt-mp3?url=${encodeURIComponent(input)}&apikey=free_key`).then(r => { const dl = r?.data?.download_url || r?.data?.result?.download_url; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
       { name: 'GudangApi-mp3',   fn: () => this._axGet(`https://api.gudangapi.com/youtube/mp3?url=${encodeURIComponent(input)}`).then(r => { const dl = r?.data?.download || r?.data?.link; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
@@ -1394,20 +1388,18 @@ class MusicDownloader {
 
     // ── Phase 2: yt-dlp CLI (multiple clients) ────────────────
     const ytdlpCmds = [
-      // ── 2026 YouTube fix: web_creator + web clients bypass PO token requirement ──
-      { name: 'yt-dlp web_creator',      cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=web_creator,web" --no-check-certificates') },
-      { name: 'yt-dlp ios+web',          cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=ios,web_creator" --no-check-certificates') },
-      { name: 'yt-dlp tv_embedded',      cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=tv_embedded,web_creator" --no-check-certificates') },
-      { name: 'yt-dlp mweb+creator',     cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=mweb,web_creator" --no-check-certificates') },
-      { name: 'yt-dlp default',          cmd: this._ytdlpCmd(input, td) },
-      { name: 'yt-dlp android',          cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=android,web_creator"') },
+      { name: 'yt-dlp default',         cmd: this._ytdlpCmd(input, td) },
+      { name: 'yt-dlp android',          cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=android"') },
       { name: 'yt-dlp ios',              cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=ios"') },
-      { name: 'yt-dlp android_music',    cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=android_music,web_creator"') },
-      { name: 'yt-dlp bestaudio',        cmd: `yt-dlp -f bestaudio -x --audio-format mp3 --extractor-args "youtube:player_client=web_creator,ios" "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
-      { name: 'yt-dlp 192k',             cmd: `yt-dlp -x --audio-format mp3 --audio-quality 192 --extractor-args "youtube:player_client=web_creator" "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
-      { name: 'yt-dlp no-check-cert',    cmd: `yt-dlp -x --audio-format mp3 --no-check-certificate --extractor-args "youtube:player_client=web_creator,web" "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
-      { name: 'yt-dlp force-ipv4',       cmd: `yt-dlp -x --audio-format mp3 --force-ipv4 --extractor-args "youtube:player_client=web_creator" "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
-      { name: 'yt-dlp web-only',         cmd: `yt-dlp -x --audio-format mp3 --extractor-args "youtube:player_client=web" --no-check-certificates "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
+      { name: 'yt-dlp web',              cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=web"') },
+      { name: 'yt-dlp android_music',    cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=android_music"') },
+      { name: 'yt-dlp tv_embedded',      cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=tv_embedded"') },
+      { name: 'yt-dlp mweb',             cmd: this._ytdlpCmd(input, td, '--extractor-args "youtube:player_client=mweb"') },
+      { name: 'yt-dlp bestaudio',        cmd: `yt-dlp -f bestaudio -x --audio-format mp3 "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
+      { name: 'yt-dlp 192k',             cmd: `yt-dlp -x --audio-format mp3 --audio-quality 192 "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
+      { name: 'yt-dlp cookies-browser',  cmd: `yt-dlp -x --audio-format mp3 --cookies-from-browser chrome "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
+      { name: 'yt-dlp no-check-cert',    cmd: `yt-dlp -x --audio-format mp3 --no-check-certificate "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
+      { name: 'yt-dlp proxy-bypass',     cmd: `yt-dlp -x --audio-format mp3 --force-ipv4 "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
       { name: 'youtube-dl',              cmd: `youtube-dl -x --audio-format mp3 --audio-quality 0 "${input}" -o "${td}/%(title)s.%(ext)s" 2>/dev/null` },
     ];
 
@@ -1982,10 +1974,6 @@ class VideoDownloader {
     // Phase 1: External APIs (fastest, no local dependency)
     const apiMethods = [
       { name: 'Cobalt',       fn: () => this._apiCobalt(url, q) },
-      // ── 2026-05 fresh video APIs ───────────────────────────
-      { name: 'Y2api-mp4',    fn: () => this._axGet(`https://api.y2api.net/api/v1/mp4?url=${encodeURIComponent(url)}&quality=${q}`).then(r => { const dl = r?.data?.url || r?.data?.download_url; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
-      { name: 'Ytapi-pw-mp4', fn: () => this._axGet(`https://ytapi.pw/mp4?url=${encodeURIComponent(url)}&quality=${q}`).then(r => { const dl = r?.data?.url || r?.data?.link; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
-      { name: 'Zydl-mp4',     fn: () => this._axGet(`https://api.zydl.net/v1/youtube/mp4?url=${encodeURIComponent(url)}&quality=${q}`).then(r => { const dl = r?.data?.url || r?.data?.link; if (dl) return this._dlUrl(dl); throw new Error('no url'); }) },
       { name: 'Siputzx',     fn: () => this._apiSiputzx(url, q) },
       { name: 'Agatz',       fn: () => this._apiAgatz(url, q) },
       { name: 'EliteProTech',fn: () => this._apiEliteProTech(url, q) },
@@ -2042,17 +2030,15 @@ class VideoDownloader {
     // Phase 2: yt-dlp CLI with multiple client modes
     const outPath = path.join(this.tempDir, `video_${Date.now()}.mp4`);
     const cliMethods = [
-      // ── 2026 YouTube fix: web_creator client bypasses PO token ──
-      { name: 'yt-dlp web_creator',  cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=web_creator,web" --no-check-certificates') },
-      { name: 'yt-dlp ios+creator',  cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=ios,web_creator" --no-check-certificates') },
-      { name: 'yt-dlp tv_embedded',  cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=tv_embedded,web_creator" --no-check-certificates') },
       { name: 'yt-dlp default',      cmd: this._ytdlpCmd(url, q, outPath) },
-      { name: 'yt-dlp android',      cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=android,web_creator"') },
+      { name: 'yt-dlp android',      cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=android"') },
       { name: 'yt-dlp ios',          cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=ios"') },
-      { name: 'yt-dlp mweb',         cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=mweb,web_creator"') },
-      { name: 'yt-dlp no-cert',      cmd: this._ytdlpCmd(url, q, outPath, '--no-check-certificate --extractor-args "youtube:player_client=web_creator"') },
-      { name: 'yt-dlp best',         cmd: `yt-dlp -f best[ext=mp4] --no-playlist --no-warnings --extractor-args "youtube:player_client=web_creator,ios" -o "${outPath}" "${url}" 2>/dev/null` },
-      { name: 'yt-dlp worst',        cmd: `yt-dlp -f worst[ext=mp4]/worst --no-playlist --no-warnings --extractor-args "youtube:player_client=web_creator" -o "${outPath}" "${url}" 2>/dev/null` },
+      { name: 'yt-dlp tv_embedded',  cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=tv_embedded"') },
+      { name: 'yt-dlp web',          cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=web"') },
+      { name: 'yt-dlp mweb',         cmd: this._ytdlpCmd(url, q, outPath, '--extractor-args "youtube:player_client=mweb"') },
+      { name: 'yt-dlp no-cert',      cmd: this._ytdlpCmd(url, q, outPath, '--no-check-certificate') },
+      { name: 'yt-dlp best',         cmd: `yt-dlp -f best[ext=mp4] --no-playlist --no-warnings -o "${outPath}" "${url}" 2>/dev/null` },
+      { name: 'yt-dlp worstaudio',   cmd: `yt-dlp -f worst[ext=mp4]/worst --no-playlist --no-warnings -o "${outPath}" "${url}" 2>/dev/null` },
     ];
 
     for (const m of cliMethods) {

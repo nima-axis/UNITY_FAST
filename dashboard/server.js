@@ -116,9 +116,6 @@ function checkRateLimit(ip, num) {
   return { blocked: false };
 }
 
-// ── MOBILE APP API ────────────────────────────────────────────
-app.use("/api/app", require("./routes/appApi"));
-
 // ── PAIR: Submit number → get pair code ───────────────────────
 app.post('/api/pair', async (req, res) => {
   const userId = (req.body.number || '').replace(/[^0-9]/g, '');
@@ -482,6 +479,118 @@ app.get('/api/pair/stats', async (req, res) => {
 app.get('/pair', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'pair.html'));
 });
+
+// ════════════════════════════════════════════════════════════════
+// ── UNITY-MD Flutter App API (/api/app/*) ────────────────────
+// ════════════════════════════════════════════════════════════════
+
+// Ping
+app.get('/api/app/ping', (req, res) => {
+  res.json({ ok: true, status: 'online' });
+});
+
+// Register (get pair code)
+app.post('/api/app/register', async (req, res) => {
+  const phone = (req.body.phone || '').replace(/[^0-9]/g, '');
+  if (phone.length < 7) return res.status(400).json({ ok: false, error: 'Invalid phone number' });
+  if (!_sm) return res.status(503).json({ ok: false, error: 'Server not ready' });
+
+  const rl = checkRateLimit(null, phone);
+  if (rl.blocked) return res.status(429).json({ ok: false, error: rl.reason });
+
+  if (blockedNumbers.has(phone)) {
+    return res.status(403).json({ ok: false, error: 'This number has been blocked.' });
+  }
+
+  const existing = _sm.getSession(phone);
+  if (existing && existing.status === 'connected') {
+    return res.json({ ok: true, status: 'connected', number: phone });
+  }
+
+  try {
+    const sess = await _sm.startSession(phone, (uid, update) => {
+      io.emit('session_update', { userId: uid, ...update });
+    });
+
+    let waited = 0;
+    while (!sess.pairCode && sess.status !== 'connected' && sess.status !== 'error' && waited < 60000) {
+      await new Promise(r => setTimeout(r, 500));
+      waited += 500;
+    }
+
+    if (sess.status === 'error')     return res.status(500).json({ ok: false, error: 'Session error. Please try again.' });
+    if (sess.status === 'connected') return res.json({ ok: true, status: 'connected', number: phone });
+    if (sess.pairCode)               return res.json({ ok: true, status: 'pairing', pairCode: sess.pairCode, number: phone });
+    return res.status(504).json({ ok: false, error: 'Pair code timeout. Try again.' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Status
+app.get('/api/app/status/:phone', (req, res) => {
+  if (!_sm) return res.status(503).json({ ok: false, status: 'error' });
+  const phone = req.params.phone.replace(/[^0-9]/g, '');
+  const sess  = _sm.getSession(phone);
+  if (!sess) return res.json({ ok: true, status: 'not_started' });
+  res.json({ ok: true, status: sess.status, pairCode: sess.pairCode || null });
+});
+
+// Restart bot session
+app.post('/api/app/restart', async (req, res) => {
+  const phone = (req.body.phone || '').replace(/[^0-9]/g, '');
+  if (phone.length < 7) return res.status(400).json({ ok: false, error: 'Invalid phone number' });
+  if (!_sm) return res.status(503).json({ ok: false, error: 'Server not ready' });
+  try {
+    await _sm.stopSession(phone).catch(() => {});
+    await _sm.startSession(phone, (uid, update) => {
+      io.emit('session_update', { userId: uid, ...update });
+    });
+    res.json({ ok: true, status: 'restarting' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Reconnect
+app.post('/api/app/reconnect', async (req, res) => {
+  const phone = (req.body.phone || '').replace(/[^0-9]/g, '');
+  if (phone.length < 7) return res.status(400).json({ ok: false, error: 'Invalid phone number' });
+  if (!_sm) return res.status(503).json({ ok: false, error: 'Server not ready' });
+  try {
+    const sess = _sm.getSession(phone);
+    if (sess && sess.status === 'connected') return res.json({ ok: true, status: 'connected' });
+    await _sm.clearUserSession(phone).catch(() => {});
+    return res.json({ ok: true, status: 'cleared', message: 'Session cleared. Please pair again.' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Bot info
+app.get('/api/app/bot/info/:phone', async (req, res) => {
+  const phone = req.params.phone.replace(/[^0-9]/g, '');
+  if (!_sm) return res.status(503).json({ ok: false, error: 'Server not ready' });
+  const sess = _sm.getSession(phone);
+  if (!sess || sess.status !== 'connected') {
+    return res.json({ ok: false, status: 'not_connected' });
+  }
+  res.json({ ok: true, status: 'connected', number: phone, connectedAt: sess.connectedAt || null, name: sess.name || null });
+});
+
+// Disconnect
+app.post('/api/app/disconnect', async (req, res) => {
+  const phone = (req.body.phone || '').replace(/[^0-9]/g, '');
+  if (phone.length < 7) return res.status(400).json({ ok: false, error: 'Invalid phone number' });
+  if (!_sm) return res.status(503).json({ ok: false, error: 'Server not ready' });
+  try {
+    await _sm.clearUserSession(phone);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ════════════════════════════════════════════════════════════════
 
 
 // ── Broadcast ─────────────────────────────────────────────────

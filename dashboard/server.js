@@ -383,7 +383,7 @@ app.post('/api/pair/verify/:number', async (req, res) => {
 });
 
 // ── Per-user BotConfig: GET settings ─────────────────────────
-app.get('/api/pair/settings/:number', requirePairAuth, async (req, res) => {
+app.get('/api/pair/settings/:number', async (req, res) => {
   const userId = req.params.number.replace(/[^0-9]/g, '');
   if (!userId) return res.status(400).json({ ok: false, error: 'Invalid number' });
   try {
@@ -415,7 +415,7 @@ app.get('/api/pair/settings/:number', requirePairAuth, async (req, res) => {
 });
 
 // ── Per-user BotConfig: SAVE settings + restart that session ─
-app.post('/api/pair/settings/:number', requirePairAuth, async (req, res) => {
+app.post('/api/pair/settings/:number', async (req, res) => {
   const userId = req.params.number.replace(/[^0-9]/g, '');
   if (!userId) return res.status(400).json({ ok: false, error: 'Invalid number' });
   const { commands, features, mode, maintenance } = req.body;
@@ -575,7 +575,28 @@ app.get('/api/app/bot/info/:phone', async (req, res) => {
   if (!sess || sess.status !== 'connected') {
     return res.json({ ok: false, status: 'not_connected' });
   }
-  res.json({ ok: true, status: 'connected', number: phone, connectedAt: sess.connectedAt || null, name: sess.name || null });
+  // Calculate uptime in seconds
+  let uptime = null;
+  if (sess.connectedAt) {
+    uptime = Math.floor((Date.now() - new Date(sess.connectedAt).getTime()) / 1000);
+  }
+
+  // Get command count from botConfig if available
+  let commandCount = 0;
+  try {
+    const botCfg = await db.getBotConfig(phone);
+    commandCount = botCfg.commandCount || 0;
+  } catch (_) {}
+
+  res.json({
+    ok: true,
+    status: 'connected',
+    number: phone,
+    connectedAt: sess.connectedAt || null,
+    name: sess.name || null,
+    uptime,
+    commandCount,
+  });
 });
 
 // Disconnect

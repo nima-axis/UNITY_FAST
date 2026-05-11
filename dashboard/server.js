@@ -560,7 +560,52 @@ app.post('/api/app/chat/send', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'App chat not set up yet' });
     }
 
-    await sock.sendMessage(botCfg.appChatJid, { text });
+    // Store user message in appChatMsgs immediately
+    const selfPhone = phone;
+    if (!global._appChatMsgs) global._appChatMsgs = {};
+    if (!global._appChatMsgs[selfPhone]) global._appChatMsgs[selfPhone] = [];
+    const userMsg = {
+      id:     'app_' + Date.now(),
+      fromMe: true,
+      text,
+      type:   'text',
+      time:   Date.now(),
+    };
+    global._appChatMsgs[selfPhone].push(userMsg);
+    if (global._appChatMsgs[selfPhone].length > 200) {
+      global._appChatMsgs[selfPhone] = global._appChatMsgs[selfPhone].slice(-200);
+    }
+
+    // Check if it's a command - execute directly instead of via WA echo
+    const cfg = require('../config');
+    const prefix = cfg.prefixes?.find(p => text.startsWith(p));
+    if (prefix) {
+      // It's a command - execute via handleMessage with fake message object
+      try {
+        const { handleMessage } = require('../src/commands/messageHandler');
+        const selfJid = phone + '@s.whatsapp.net';
+        const fakeMsg = {
+          key: {
+            remoteJid: botCfg.appChatJid,
+            fromMe:    false, // treat as user message so commands execute
+            id:        userMsg.id,
+            participant: selfJid,
+          },
+          message: { conversation: text },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+          pushName: 'App',
+        };
+        // Run async, don't await (reply comes via _appChatMsgs)
+        handleMessage(sock, fakeMsg, selfPhone).catch(() => {});
+      } catch (_cmdErr) {
+        // Fallback: send to WA group
+        await sock.sendMessage(botCfg.appChatJid, { text });
+      }
+    } else {
+      // Normal text - send to WA group so bot sees it
+      await sock.sendMessage(botCfg.appChatJid, { text });
+    }
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });

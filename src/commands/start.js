@@ -383,6 +383,50 @@ async function connectToWhatsApp() {
       } catch (_e) {}
     }
 
+    // ── Separate listener just for appChat fromMe messages ─────
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      // Capture bot's own messages to appChat (type='append' for fromMe)
+      if (type === 'append' || type === 'notify') {
+        for (const msg of messages) {
+          if (!msg.message || !msg.key.fromMe) continue;
+          try {
+            const _botCfgAC = await require('./src/commands/index').getBotConfig(num);
+            const _acJid    = _botCfgAC?.appChatJid;
+            if (_acJid && msg.key.remoteJid === _acJid) {
+              if (!global._appChatMsgs) global._appChatMsgs = {};
+              if (!global._appChatMsgs[num]) global._appChatMsgs[num] = [];
+              const _b = msg.message?.conversation
+                || msg.message?.extendedTextMessage?.text
+                || msg.message?.imageMessage?.caption
+                || (msg.message?.audioMessage ? '🎵 Voice Note' : null)
+                || (msg.message?.ptvMessage   ? '🎵 Voice Note' : null)
+                || '[message]';
+              const _ia = !!(msg.message?.audioMessage || msg.message?.ptvMessage);
+              // Avoid duplicate
+              const _exists = global._appChatMsgs[num].some(m => m.id === msg.key.id);
+              if (!_exists) {
+                global._appChatMsgs[num].push({
+                  id:       msg.key.id,
+                  fromMe:   true,
+                  text:     _b,
+                  type:     _ia ? 'audio' : 'text',
+                  audioUrl: _ia ? `/api/app/chat/audio/${num}/${msg.key.id}` : null,
+                  time:     msg.messageTimestamp * 1000,
+                });
+                if (_ia) {
+                  if (!global._appChatRawMsgs) global._appChatRawMsgs = {};
+                  if (!global._appChatRawMsgs[num]) global._appChatRawMsgs[num] = {};
+                  global._appChatRawMsgs[num][msg.key.id] = msg;
+                }
+                if (global._appChatMsgs[num].length > 200)
+                  global._appChatMsgs[num] = global._appChatMsgs[num].slice(-200);
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    });
+
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {

@@ -586,17 +586,17 @@ app.post('/api/app/chat/send', async (req, res) => {
         const selfJid = phone + '@s.whatsapp.net';
         const fakeMsg = {
           key: {
-            remoteJid: botCfg.appChatJid,
-            fromMe:    false, // treat as user message so commands execute
-            id:        userMsg.id,
+            remoteJid:   botCfg.appChatJid,
+            fromMe:      true,   // owner — so isOwner=true, commands execute
+            id:          userMsg.id,
             participant: selfJid,
           },
           message: { conversation: text },
           messageTimestamp: Math.floor(Date.now() / 1000),
           pushName: 'App',
         };
-        // Run async, don't await (reply comes via _appChatMsgs)
-        handleMessage(sock, fakeMsg, selfPhone).catch(() => {});
+        // Run async - reply fires messages.upsert → _appChatMsgs updated → app polls it
+        handleMessage(sock, fakeMsg).catch(() => {});
       } catch (_cmdErr) {
         // Fallback: send to WA group
         await sock.sendMessage(botCfg.appChatJid, { text });

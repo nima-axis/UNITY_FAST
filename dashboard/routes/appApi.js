@@ -159,10 +159,17 @@ router.post('/restart', appAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// ── In-memory chat message store (phone → messages[]) ─────────
-// Max 100 messages per phone kept in RAM
-const chatStore = new Map();
-const CHAT_MAX  = 100;
+
+// ═══════════════════════════════════════════════════════════════
+// APP CHAT — VIRTUAL CHANNEL
+// ───────────────────────────────────────────────────────────────
+// No WhatsApp group. Bot processes commands in a virtual DM.
+// sock.sendMessage is intercepted for ownerJid while _appChatActive.
+// All bot replies → chatStore → app polls and shows them.
+// ═══════════════════════════════════════════════════════════════
+
+const chatStore = new Map();   // phone → [ {id, fromMe, text, type, ts} ]
+const CHAT_MAX  = 200;
 
 function chatPush(phone, msg) {
   if (!chatStore.has(phone)) chatStore.set(phone, []);
@@ -171,70 +178,159 @@ function chatPush(phone, msg) {
   if (arr.length > CHAT_MAX) arr.splice(0, arr.length - CHAT_MAX);
 }
 
-// Called from messageHandler when a message arrives for a chat JID
-// Export so messageHandler can call: require('./appApi').storeChatMsg(phone, msg)
-function storeChatMsg(phone, fromMe, text, ts) {
-  chatPush(normalizePhone(phone), { fromMe, text, ts: ts || Date.now() });
+// ── Wrap sock.sendMessage once per session ────────────────────
+// When sock._appChatActive = true, replies to ownerJid go to chatStore
+// instead of (or in addition to) WhatsApp.
+function _wrapSockForAppChat(sock, cleanPhone) {
+  if (sock._appChatWrapped) return;
+  sock._appChatWrapped = true;
+  sock._appChatPhone   = cleanPhone;
+
+  const _orig = sock.sendMessage.bind(sock);
+
+  sock.sendMessage = async (jid, content, opts) => {
+    const ownerJid = `${cleanPhone}@s.whatsapp.net`;
+
+    if (jid === ownerJid && sock._appChatActive) {
+      // ── Intercept: extract readable content ─────────────────
+      let text = content.text || content.caption || '';
+      let type = 'text';
+
+      if (content.image)    { type = 'image';    text = text || '[📷 Image]'; }
+      if (content.audio)    { type = 'audio';    text = text || '[🎙 Voice Note]'; }
+      if (content.video)    { type = 'video';    text = text || '[🎬 Video]'; }
+      if (content.sticker)  { type = 'sticker';  text = '[🎭 Sticker]'; }
+      if (content.document) { type = 'document';
+        text = text || `[📄 ${content.fileName || 'Document'}]`; }
+
+      // Buttons / interactive → flatten to text list
+      const btns = content.buttons || content.templateButtons || [];
+      if (btns.length) {
+        const btnLines = btns
+          .map(b => `▸ ${b.buttonText?.displayText || b.displayText || ''}`)
+          .filter(Boolean).join('\n');
+        text = [content.text || content.caption || '', btnLines]
+          .filter(Boolean).join('\n\n');
+      }
+
+      // List messages
+      if (content.list) {
+        const rows = (content.list.sections || []).flatMap(s => s.rows || []);
+        const rowLines = rows.map(r => `▸ ${r.title}`).join('\n');
+        text = [
+          content.list.title || '',
+          content.list.description || '',
+          rowLines,
+        ].filter(Boolean).join('\n');
+      }
+
+      chatPush(cleanPhone, {
+        id:     `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        fromMe: false,
+        text:   text || '[Message]',
+        type,
+        ts:     Date.now(),
+      });
+
+      // Return fake key so bot code doesn't throw
+      return { key: { id: `fakebot_${Date.now()}`, fromMe: true, remoteJid: jid } };
+    }
+
+    // Not an app-chat reply — send normally via WhatsApp
+    return _orig(jid, content, opts);
+  };
 }
-module.exports.storeChatMsg = storeChatMsg;
 
 // ── POST /api/app/chat/setup ──────────────────────────────────
-// Creates a WhatsApp group for app ↔ bot communication
-const chatJids = new Map(); // phone → groupJid
-
+// Sets up virtual channel (no group creation needed)
 router.post('/chat/setup', appAuth, async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ ok: false, error: 'phone required' });
 
     const cleanPhone = normalizePhone(phone);
-
-    // If already set up, just return it
-    if (chatJids.has(cleanPhone))
-      return res.json({ ok: true, jid: chatJids.get(cleanPhone) });
-
-    const sock = global.unitySock;
+    const { getSession } = require('../../src/sessionManager');
+    const userId  = buildUserId(req.appUser.uid, cleanPhone);
+    const session = getSession(userId);
+    const sock    = session?.sock;
     if (!sock) return res.status(503).json({ ok: false, error: 'Bot not connected' });
 
-    // Create a group with just the bot (owner adds themselves via phone)
-    const selfNum = sock.user?.id?.split(':')[0];
-    const ownerJid = `${cleanPhone}@s.whatsapp.net`;
+    _wrapSockForAppChat(sock, cleanPhone);
 
-    const result = await sock.groupCreate('UNITY-MD Chat', [ownerJid]);
-    const jid = result?.id;
-    if (!jid) return res.status(500).json({ ok: false, error: 'Group creation failed' });
-
-    chatJids.set(cleanPhone, jid);
-    res.json({ ok: true, jid });
+    res.json({ ok: true, jid: `${cleanPhone}@s.whatsapp.net` });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── GET /api/app/chat/jid/:phone ──────────────────────────────
+// Returns ownerJid if bot is connected (virtual channel is always ready)
 router.get('/chat/jid/:phone', appAuth, async (req, res) => {
   try {
     const cleanPhone = normalizePhone(req.params.phone);
-    const jid = chatJids.get(cleanPhone) || null;
-    res.json({ ok: true, jid });
+    const { getSession } = require('../../src/sessionManager');
+    const userId  = buildUserId(req.appUser.uid, cleanPhone);
+    const session = getSession(userId);
+
+    if (!session?.sock) return res.json({ ok: true, jid: null });
+
+    // Ensure sock is wrapped on every connect/reconnect
+    _wrapSockForAppChat(session.sock, cleanPhone);
+
+    res.json({ ok: true, jid: `${cleanPhone}@s.whatsapp.net` });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── POST /api/app/chat/send ───────────────────────────────────
+// User sends text or command → bot processes → reply intercepted to chatStore
 router.post('/chat/send', appAuth, async (req, res) => {
   try {
     const { phone, text } = req.body;
     if (!phone || !text) return res.status(400).json({ ok: false, error: 'phone + text required' });
 
     const cleanPhone = normalizePhone(phone);
-    const sock = global.unitySock;
+    const { getSession } = require('../../src/sessionManager');
+    const userId  = buildUserId(req.appUser.uid, cleanPhone);
+    const session = getSession(userId);
+    const sock    = session?.sock;
     if (!sock) return res.status(503).json({ ok: false, error: 'Bot not connected' });
 
-    const jid = chatJids.get(cleanPhone);
-    if (!jid) return res.status(404).json({ ok: false, error: 'Chat not set up. Call /chat/setup first.' });
+    _wrapSockForAppChat(sock, cleanPhone);
 
-    await sock.sendMessage(jid, { text });
+    const ownerJid = `${cleanPhone}@s.whatsapp.net`;
+    const msgId    = `APP_${Date.now()}`;
 
-    // Save to local store (fromMe = false since it's from the app user)
-    chatPush(cleanPhone, { fromMe: false, text, ts: Date.now() });
+    // ① Save user's outgoing bubble immediately
+    chatPush(cleanPhone, {
+      id:     msgId,
+      fromMe: true,
+      text,
+      type:   'text',
+      ts:     Date.now(),
+    });
+
+    // ② Activate intercept — bot replies to ownerJid go to chatStore
+    sock._appChatActive = true;
+
+    // ③ Emit fake DM message from ownerJid (not a group)
+    //    parser sees: fromMe=false, remoteJid=ownerJid, no participant
+    //    → isOwner=true, isGroup=false → command runs with owner perms
+    //    → m.reply() calls sock.sendMessage(ownerJid, ...) → intercepted ✅
+    sock.ev.emit('messages.upsert', {
+      messages: [{
+        key: {
+          fromMe:      false,
+          remoteJid:   ownerJid,
+          id:          msgId,
+          // no participant — this is a DM not a group
+        },
+        message:          { conversation: text },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+        pushName:         'App',
+      }],
+      type: 'notify',
+    });
+
+    // ④ Clear intercept flag after 10s (command should have replied by then)
+    setTimeout(() => { try { sock._appChatActive = false; } catch (_) {} }, 10000);
 
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }

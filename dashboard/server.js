@@ -555,11 +555,17 @@ async function _acRun(sock, phone, ownerJid, msgId, text) {
   const { plugins } = require('../src/commands/messageHandler');
   const db2 = require('../src/commands/index');
 
-  const prefix = cfg.prefixes.find(p => text.startsWith(p));
-  console.log(`[APP-CHAT] prefix="${prefix}" pluginsLoaded=${plugins.size}`);
+  // Strip reply quote lines (starting with ">") — find actual command line
+  const lines       = text.split('\n');
+  const cmdLine     = lines.find(l => cfg.prefixes.some(p => l.trim().startsWith(p))) || text;
+  const quotedLines = lines.filter(l => l.trim().startsWith('>'));
+  const quotedText  = quotedLines.map(l => l.replace(/^>\s*/, '')).join(' ').trim();
+
+  const prefix = cfg.prefixes.find(p => cmdLine.trim().startsWith(p));
+  console.log(`[APP-CHAT] prefix="${prefix}" cmdLine="${cmdLine}" pluginsLoaded=${plugins.size}`);
   if (!prefix) return;
 
-  const cmdBody = text.slice(prefix.length).trim();
+  const cmdBody = cmdLine.trim().slice(prefix.length).trim();
   const cmdName = cmdBody.split(/\s+/)[0].toLowerCase();
   const cmdArgs = cmdBody.split(/\s+/).slice(1);
 
@@ -598,7 +604,13 @@ async function _acRun(sock, phone, ownerJid, msgId, text) {
     msg: { key: { fromMe: false, remoteJid: ownerJid, id: msgId },
            message: { conversation: text },
            messageTimestamp: Math.floor(Date.now() / 1000) },
-    msgType: 'conversation', isMedia: false, quoted: null,
+    msgType: 'conversation', isMedia: false,
+    // Pass quoted context so commands like .reply, .ai etc can see it
+    quoted: quotedText ? {
+      text: quotedText,
+      sender: `${phone}@s.whatsapp.net`,
+      key: { fromMe: false, id: `q_${Date.now()}` },
+    } : null,
     footer: cfg.footer || '',
     message: { conversation: text },
     reply:           async (c) => push(typeof c === 'string' ? c : (c?.text || c?.caption || JSON.stringify(c))),

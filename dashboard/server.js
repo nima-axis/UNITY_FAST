@@ -481,118 +481,172 @@ app.get('/pair', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════
-// ── UNITY-MD App Chat API (/api/app/chat/*) ──────────────────
+// ── UNITY-MD App Chat — Virtual Channel ─────────────────────
+// ════════════════════════════════════════════════════════════════
+// No WhatsApp group needed. Commands run directly via plugin engine.
+// Replies are intercepted and stored in _acStore (in-memory).
 // ════════════════════════════════════════════════════════════════
 
-// Setup: create/get the app chat group for this user
+const _acStore = new Map(); // phone → [{id,fromMe,text,type,ts}]
+const _AC_MAX  = 200;
+
+function _acPush(phone, msg) {
+  if (!_acStore.has(phone)) _acStore.set(phone, []);
+  const arr = _acStore.get(phone);
+  arr.push(msg);
+  if (arr.length > _AC_MAX) arr.splice(0, arr.length - _AC_MAX);
+}
+
+// Setup — just verify bot is connected (no group creation)
 app.post('/api/app/chat/setup', async (req, res) => {
   const phone = (req.body.phone || '').replace(/[^0-9]/g, '');
   if (!phone) return res.status(400).json({ ok: false, error: 'Invalid phone' });
   if (!_sm)   return res.status(503).json({ ok: false, error: 'Server not ready' });
-
-  try {
-    const sess = _sm.getSession(phone);
-    const sock = sess?.sock;
-    if (!sock || sess.status !== 'connected') {
-      return res.status(503).json({ ok: false, error: 'Bot not connected' });
-    }
-
-    const botCfg = await db.getBotConfig(phone);
-
-    // Already have a group — return it
-    if (botCfg.appChatJid) {
-      return res.json({ ok: true, jid: botCfg.appChatJid });
-    }
-
-    // Create new group
-    const selfJid  = sock.user?.id?.replace(/:[0-9]+@/, '@') || phone + '@s.whatsapp.net';
-    const created  = await sock.groupCreate('UNITY-MD Bot Chat', [selfJid]);
-    const groupJid = created.id;
-
-    // Save to config
-    botCfg.appChatJid = groupJid;
-    await botCfg.save();
-
-    // Send welcome message
-    await sock.sendMessage(groupJid, {
-      text: `🤖 *UNITY-MD App Chat*
-
-This chat is linked to your UNITY-MD app.
-
-✅ Startup messages & voice notes will appear here.
-💬 You can also send messages to the bot from here.`,
-    }).catch(() => {});
-
-    res.json({ ok: true, jid: groupJid });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  const sess = _sm.getSession(phone);
+  if (!sess?.sock) return res.status(503).json({ ok: false, error: 'Bot not connected' });
+  res.json({ ok: true, jid: `${phone}@s.whatsapp.net` });
 });
 
-// Get chat JID
+// JID — always ownerJid (virtual, not a real group)
 app.get('/api/app/chat/jid/:phone', async (req, res) => {
   const phone = req.params.phone.replace(/[^0-9]/g, '');
-  if (!phone) return res.status(400).json({ ok: false, error: 'Invalid phone' });
-  try {
-    const botCfg = await db.getBotConfig(phone);
-    res.json({ ok: true, jid: botCfg.appChatJid || null });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  if (!_sm) return res.json({ ok: true, jid: null });
+  const sess = _sm.getSession(phone);
+  res.json({ ok: true, jid: sess?.sock ? `${phone}@s.whatsapp.net` : null });
 });
 
-// Send message from app to bot chat
+// Send — direct plugin execution, reply → _acStore
 app.post('/api/app/chat/send', async (req, res) => {
   const phone = (req.body.phone || '').replace(/[^0-9]/g, '');
   const text  = (req.body.text  || '').trim();
   if (!phone || !text) return res.status(400).json({ ok: false, error: 'Missing phone or text' });
   if (!_sm) return res.status(503).json({ ok: false, error: 'Server not ready' });
 
-  try {
-    const sess = _sm.getSession(phone);
-    const sock = sess?.sock;
-    if (!sock || sess.status !== 'connected') {
-      return res.status(503).json({ ok: false, error: 'Bot not connected' });
-    }
+  const sess = _sm.getSession(phone);
+  const sock = sess?.sock;
 
-    const botCfg = await db.getBotConfig(phone);
-    if (!botCfg.appChatJid) {
-      return res.status(404).json({ ok: false, error: 'App chat not set up yet' });
-    }
+  console.log(`[APP-CHAT] send | phone=${phone} text="${text}" sock=${!!sock}`);
 
+  if (!sock) return res.status(503).json({ ok: false, error: 'Bot not connected' });
 
-    // Send to appChat group — bot receives via messages.upsert,
-    // executes command (isOwner=true), reply stored in _appChatMsgs
-    await sock.sendMessage(botCfg.appChatJid, { text });
+  const msgId    = `APP_${Date.now()}`;
+  const ownerJid = `${phone}@s.whatsapp.net`;
 
+  // Save outgoing bubble immediately
+  _acPush(phone, { id: msgId, fromMe: true, text, type: 'text', ts: Date.now() });
 
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  // Run plugin async — don't block response
+  _acRun(sock, phone, ownerJid, msgId, text).catch(e =>
+    console.error('[APP-CHAT] _acRun error:', e.message));
+
+  res.json({ ok: true });
 });
 
-// Get recent messages from app chat (last 30)
+// Get messages
 app.get('/api/app/chat/messages/:phone', async (req, res) => {
   const phone = req.params.phone.replace(/[^0-9]/g, '');
-  if (!phone) return res.status(400).json({ ok: false, error: 'Invalid phone' });
-  if (!_sm)   return res.status(503).json({ ok: false, error: 'Server not ready' });
-
-  try {
-    const botCfg = await db.getBotConfig(phone);
-    if (!botCfg.appChatJid) {
-      return res.json({ ok: true, messages: [], jid: null });
-    }
-
-    // Get messages from in-memory store
-    const jid  = botCfg.appChatJid;
-    const msgs = global._appChatMsgs?.[phone] || [];
-    res.json({ ok: true, messages: msgs.slice(-30), jid });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+  const msgs  = _acStore.get(phone) || [];
+  res.json({ ok: true, messages: msgs });
 });
 
+// ── Direct plugin runner ──────────────────────────────────────
+async function _acRun(sock, phone, ownerJid, msgId, text) {
+  const cfg = require('../src/../config');
+  const { plugins } = require('../src/commands/messageHandler');
+  const db2 = require('../src/commands/index');
+
+  const prefix = cfg.prefixes.find(p => text.startsWith(p));
+  console.log(`[APP-CHAT] prefix="${prefix}" pluginsLoaded=${plugins.size}`);
+  if (!prefix) return;
+
+  const cmdBody = text.slice(prefix.length).trim();
+  const cmdName = cmdBody.split(/\s+/)[0].toLowerCase();
+  const cmdArgs = cmdBody.split(/\s+/).slice(1);
+
+  const push = (txt, type = 'text') => _acPush(phone, {
+    id: `bot_${Date.now()}_${Math.random().toString(36).slice(2,5)}`,
+    fromMe: false, text: txt || '[Message]', type, ts: Date.now(),
+  });
+
+  const plugin = plugins.get(cmdName);
+  console.log(`[APP-CHAT] cmd="${cmdName}" found=${!!plugin}`);
+
+  if (!plugin) {
+    push(`❓ Command not found: *.${cmdName}*\n\nType *.menu* to see all commands.`);
+    return;
+  }
+
+  const access = plugin.access || plugin.category || 'all';
+  if (['group','groupOnly','admin','groupAdmin'].includes(access)) {
+    push(`🚫 *.${cmdName}* is group-only and won't work in App Chat.`);
+    return;
+  }
+
+  const m = {
+    key: { fromMe: false, remoteJid: ownerJid, id: msgId },
+    jid: ownerJid, chat: ownerJid,
+    sender: ownerJid, senderNum: phone,
+    pushName: 'App',
+    isGroup: false, isGroupAdmin: false, isBotAdmin: false,
+    isOwner: true, isPaired: true, isSelfChat: true,
+    isFromChannel3: false,
+    sessionOwner: sock.sessionOwner || phone,
+    category: 'creator',
+    isCmd: true, isButtonTap: false,
+    command: cmdName, args: cmdArgs, text: cmdArgs.join(' '),
+    prefix, body: text,
+    msg: { key: { fromMe: false, remoteJid: ownerJid, id: msgId },
+           message: { conversation: text },
+           messageTimestamp: Math.floor(Date.now() / 1000) },
+    msgType: 'conversation', isMedia: false, quoted: null,
+    footer: cfg.footer || '',
+    message: { conversation: text },
+    reply:           async (c) => push(typeof c === 'string' ? c : (c?.text || c?.caption || JSON.stringify(c))),
+    replyWithThumb:  async (c) => push(typeof c === 'string' ? c : (c?.text || '')),
+    replyAutoDelete: async (c) => push(typeof c === 'string' ? c : (c?.text || '')),
+  };
+
+  // Intercept sock.sendMessage → _acStore
+  const _orig = sock._acReal || sock.sendMessage;
+  if (!sock._acReal) sock._acReal = _orig;
+
+  sock.sendMessage = async (jid, content, opts) => {
+    if (jid !== ownerJid) return _orig(jid, content, opts);
+    if (content.delete || content.react || content.edit)
+      return { key: { id: `ctrl_${Date.now()}`, fromMe: true, remoteJid: jid } };
+
+    let txt = content.text || content.caption || '';
+    let type = 'text';
+    if (content.image)    { type = 'image';    txt = txt || '[📷 Image]'; }
+    if (content.audio)    { type = 'audio';    txt = txt || '[🎙 Voice]'; }
+    if (content.video)    { type = 'video';    txt = txt || '[🎬 Video]'; }
+    if (content.sticker)  { type = 'sticker';  txt = '[🎭 Sticker]'; }
+    if (content.document) { type = 'document'; txt = txt || `[📄 ${content.fileName||'File'}]`; }
+
+    const btns = content.buttons || content.templateButtons || [];
+    if (btns.length) {
+      const bl = btns.map(b => `▸ ${b.buttonText?.displayText||b.displayText||''}`).filter(Boolean).join('\n');
+      txt = [txt, bl].filter(Boolean).join('\n\n');
+    }
+    if (content.list) {
+      const rows = (content.list.sections||[]).flatMap(s => s.rows||[]);
+      txt = [content.list.title||'', content.list.description||'',
+             rows.map(r => `▸ ${r.title}`).join('\n')].filter(Boolean).join('\n');
+    }
+    push(txt || '[Message]', type);
+    return { key: { id: `ac_${Date.now()}`, fromMe: true, remoteJid: jid } };
+  };
+
+  try {
+    await plugin.run({ sock, m, user: { isBanned: false, isMuted: false, points: 0 }, group: null, cfg, db: db2 });
+    console.log(`[APP-CHAT] "${cmdName}" completed`);
+  } catch (err) {
+    console.error(`[APP-CHAT] "${cmdName}" threw:`, err.message);
+    push(`⚠️ *${cmdName}* error: ${err.message}`);
+  } finally {
+    sock.sendMessage = _orig;
+  }
+}
 
 // ── Audio stream endpoint for app chat voice notes ──────────
 app.get('/api/app/chat/audio/:phone/:msgId', async (req, res) => {

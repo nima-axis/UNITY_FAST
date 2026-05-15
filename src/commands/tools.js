@@ -155,10 +155,16 @@ module.exports = {
       const start = Date.now();
       const sent  = await m.reply(t('tool_pinging',lang), { _noImage: true });
       const ms    = Date.now() - start;
-      return sock.sendMessage(chat, {
-        text: `🏓 *Pong!*\n\n⚡ Speed: *${ms}ms*\n✅ Status: Online\n\n${cfg.footer}`,
-        edit: sent.key,
-      });
+      const pongText = `🏓 *Pong!*\n\n⚡ Speed: *${ms}ms*\n✅ Status: Online\n\n${cfg.footer}`;
+      // Guard: edit only works in real WhatsApp — skip if sent.key is undefined
+      if (sent?.key) {
+        return sock.sendMessage(chat, {
+          text: pongText,
+          edit: sent.key,
+        });
+      } else {
+        return m.reply(pongText, { _noImage: true });
+      }
     }
 
     // ── RUNTIME ───────────────────────────────────────────────

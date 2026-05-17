@@ -87,6 +87,12 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: 'Unauthorized' });
 }
 
+// Accepts dashboard auth OR boost site auth
+function requireAnyAuth(req, res, next) {
+  if (req.session?.authenticated || req.session?.boostAuthenticated) return next();
+  res.status(401).json({ error: 'Unauthorized' });
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
   if (req.body.password === cfg.dashPassword) {
@@ -942,7 +948,7 @@ function readCarConfig() {
 }
 
 // ── Channel Follow Boost ─────────────────────────────────────
-app.post('/api/channel-follow', requireAuth, async (req, res) => {
+app.post('/api/channel-follow', requireAnyAuth, async (req, res) => {
   try {
     const { channelJid } = req.body;
     if (!channelJid) return res.json({ ok: false, error: 'channelJid required' });
@@ -1089,11 +1095,11 @@ app.post('/api/channel-follow', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/channel-react', requireAuth, (req, res) => {
+app.get('/api/channel-react', requireAnyAuth, (req, res) => {
   res.json({ ok: true, ...readCarConfig() });
 });
 
-app.post('/api/channel-react', requireAuth, async (req, res) => {
+app.post('/api/channel-react', requireAnyAuth, async (req, res) => {
   try {
     const { enabled, channelJid, postLink, emoji, emojis } = req.body;
     // Normalize: accept full link or bare JID
@@ -1439,6 +1445,33 @@ app.post('/api/channel-react', requireAuth, async (req, res) => {
     try { io.emit('react_done', { successCount: 0, failCount: 1, total: 1, emoji: '❤️', error: e.message }); } catch {}
   }
 });
+
+// ── BOOST SITE ────────────────────────────────────────────────
+// Separate password-protected page for Follow & React boost
+// Password set via BOOST_PASSWORD env var (default: 012345)
+const BOOST_PASSWORD = process.env.BOOST_PASSWORD || '012345';
+
+app.get('/boost', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'boost.html'));
+});
+
+app.get('/api/boost/check', (req, res) => {
+  res.json({ ok: true, authenticated: !!(req.session?.authenticated || req.session?.boostAuthenticated) });
+});
+
+app.post('/api/boost/login', (req, res) => {
+  if (req.body.password === BOOST_PASSWORD) {
+    req.session.boostAuthenticated = true;
+    return res.json({ ok: true });
+  }
+  res.status(401).json({ ok: false, error: 'Wrong password' });
+});
+
+app.post('/api/boost/logout', (req, res) => {
+  req.session.boostAuthenticated = false;
+  res.json({ ok: true });
+});
+// ── END BOOST SITE ─────────────────────────────────────────────
 
 // ── socket.io ────────────────────────────────────────────────
 io.on('connection', (socket) => {

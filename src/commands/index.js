@@ -15,6 +15,9 @@ async function connect() {
         connectTimeoutMS: 15000,
         maxPoolSize: 5,
         minPoolSize: 1,
+        tls: true,
+        tlsAllowInvalidCertificates: false,
+        family: 4,
       });
       connected = true;
       console.log('\x1b[32m[DB]\x1b[0m MongoDB connected ✅');

@@ -355,6 +355,58 @@ async function getStats(days = 1) {
   return Stats.find({ date: { $in: dates } }).sort({ date: -1 });
 }
 
+
+// ── MongoDB Auth State (Baileys compatible) ───────────────────
+async function useMongoDBAuthState() {
+  const { BufferJSON, initAuthCreds } = require('@whiskeysockets/baileys');
+
+  const readData = async (key) => {
+    const doc = await AuthState.findById(key).lean();
+    if (!doc) return null;
+    return JSON.parse(JSON.stringify(doc.data), BufferJSON.reviver);
+  };
+
+  const writeData = async (key, data) => {
+    await AuthState.findByIdAndUpdate(
+      key,
+      { _id: key, data: JSON.parse(JSON.stringify(data, BufferJSON.replacer)) },
+      { upsert: true }
+    );
+  };
+
+  const removeData = async (key) => {
+    await AuthState.deleteOne({ _id: key });
+  };
+
+  const creds = (await readData('creds')) || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          await Promise.all(ids.map(async (id) => {
+            const val = await readData(`${type}-${id}`);
+            if (val) data[id] = val;
+          }));
+          return data;
+        },
+        set: async (data) => {
+          await Promise.all(
+            Object.entries(data).flatMap(([type, ids]) =>
+              Object.entries(ids).map(([id, val]) =>
+                val ? writeData(`${type}-${id}`, val) : removeData(`${type}-${id}`)
+              )
+            )
+          );
+        },
+      },
+    },
+    saveCreds: () => writeData('creds', creds),
+  };
+}
+
 module.exports = {
   connect,
   User, Group, Stats, Audit, JadiBot, Schedule, AuthState, BotConfig,
@@ -368,4 +420,5 @@ module.exports = {
   resetWarns,
   getStats,
   setFirstBootTime,
+  useMongoDBAuthState,
 };

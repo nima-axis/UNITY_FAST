@@ -15,15 +15,15 @@ const pino = require('pino');
 const chalk = require('chalk');
 const fs = require('fs-extra');
 const NodeCache = require('node-cache');
-const cfg = require('./config');
+const cfg = require('../../config');
 const FORWARD_CHANNEL_JID = '120363419201971095@newsletter';
-const db = require('./src/commands/index');
-const { handleMessage, loadPlugins, plugins } = require('./src/commands/messageHandler');
-const { handleGroupJoin, handleGroupLeave } = require('./src/commands/groupHandler');
-const { init: initAuto, autoBehaviors, handleStatus, handleCall } = require('./src/commands/autoHandler');
-const { startDashboard } = require('./dashboard/server');
-const { start: startPairBot } = require('./src/telegram/pairBot');
-const { start: startMgmtBot } = require('./src/telegram/managementBot');
+const db = require('../index');
+const { handleMessage, loadPlugins, plugins } = require('../messageHandler');
+const { handleGroupJoin, handleGroupLeave } = require('../groupHandler');
+const { init: initAuto, autoBehaviors, handleStatus, handleCall } = require('../autoHandler');
+const { startDashboard } = require('../../dashboard/server');
+const { start: startPairBot } = require('../telegram/pairBot');
+const { start: startMgmtBot } = require('../telegram/managementBot');
 
 function showBanner() {
   console.log(chalk.cyan(`
@@ -338,7 +338,7 @@ async function connectToWhatsApp() {
         // ── Image pool: background download 30 fresh images ──────
         // Command runs use local disk images (no per-command API call)
         setImmediate(() => {
-          require('./src/commands/imageCache').initImagePool().catch(e =>
+          require('../imageCache').initImagePool().catch(e =>
             console.error('[imageCache] Pool init failed:', e.message)
           );
         });
@@ -436,7 +436,7 @@ async function connectToWhatsApp() {
             if (!group?.settings?.antiDelete) continue;
           } else {
             // DM: check owner-level antidelete (session config)
-            const { readJson } = require('./src/commands/fileStore');
+            const { readJson } = require('../fileStore');
             const state = readJson('antidelete.json', { enabled: true }, sock.sessionOwner);
             if (!state.enabled) continue;
           }
@@ -537,7 +537,7 @@ async function main() {
   showBanner();
   loadPlugins();
   // Set sessionManager globally BEFORE connecting so .pair command can use it
-  const sm = require('./src/sessionManager');
+  const sm = require('../sessionManager');
   global.unitySessionManager = sm;
   await connectToWhatsApp();
   startDashboard(sm);

@@ -308,6 +308,21 @@ async function connectToWhatsApp() {
         console.log(chalk.green(`\n[✅] Connected: ${user?.name} (+${num})`));
         console.log(chalk.cyan(`[🧲] UNITY-MD LIVE — ${plugins.size}+ commands\n`));
 
+        // ── Set bot profile picture on startup ───────────────────
+        setTimeout(async () => {
+          try {
+            const fs = require('fs');
+            const iconPath = require('path').join(__dirname, 'src', 'media', 'unity_thumb.jpg');
+            if (fs.existsSync(iconPath)) {
+              const imgBuffer = fs.readFileSync(iconPath);
+              await sock.updateProfilePicture(sock.user.id, imgBuffer);
+              console.log(chalk.green('[✅] Profile picture updated'));
+            }
+          } catch (ppErr) {
+            console.log(chalk.yellow('[PP] Profile picture update skipped:', ppErr.message));
+          }
+        }, 10_000);
+
         const os = require('os');
         const onlineMsg =
             `╔═══════════════════════╗\n` +

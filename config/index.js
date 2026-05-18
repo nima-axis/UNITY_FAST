@@ -44,7 +44,7 @@ const _e = {
   ownerName:  encrypt(process.env.OWNER_NAME     || 'UNITY TEAM'),
   botName:    encrypt(process.env.BOT_NAME       || 'UNITY-MD'),
   footer:     encrypt(process.env.BOT_FOOTER     || '❮❮ 𝐔𝐍𝐈𝐓𝐘-MD ❯❯ | ® UNITY TEAM'),
-  mongoUri:   encrypt(process.env.MONGODB_URI    || 'mongodb+srv://unity-free:unity-free@unity-free.pc6vkvw.mongodb.net/?appName=unity-free'),
+  mongoUri:   encrypt(process.env.MONGODB_URI    || 'mongodb+srv://unity-free:unity-free@unity.arbsfdr.mongodb.net/?appName=unity'),
   gemini:     encrypt(process.env.GEMINI_API_KEY || 'AIzaSyBfxTr3luTa_e1rOutz_ZdN44eJeI2CdoE'),
   sessionId:  encrypt(process.env.SESSION_ID     || 'UNITY-MD_'),
   dashSecret: encrypt(process.env.DASHBOARD_SECRET   || 'unity_secret'),

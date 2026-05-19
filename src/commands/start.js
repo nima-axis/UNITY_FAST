@@ -1,10 +1,4 @@
 'use strict';
-/**
- * ⚠️  LEGACY FILE — NOT USED
- * Entry point is /start.js (project root).
- * Require paths in this file are WRONG for this location.
- * Do not run or require this file directly.
- */
 require('dotenv').config({ path: './config.env' });
 const {
   default: makeWASocket,
@@ -21,6 +15,7 @@ const pino = require('pino');
 const chalk = require('chalk');
 const fs = require('fs-extra');
 const NodeCache = require('node-cache');
+const axios = require('axios');
 const cfg = require('./config');
 const FORWARD_CHANNEL_JID = '120363419201971095@newsletter';
 const db = require('./src/commands/index');
@@ -50,8 +45,30 @@ function showBanner() {
 const messageStore = new Map();
 const msgRetryCounterCache = new NodeCache();
 let sock = null;
-let retryCount = 0;
-const MAX_RETRIES = 10;
+let retryCount      = 0;
+const MAX_RETRIES   = 10;           // give up after 10 consecutive fails
+const BASE_DELAY_MS = 3_000;        // 3s first retry
+const MAX_DELAY_MS  = 300_000;      // cap at 5 min
+
+function getReconnectDelay() {
+  // Exponential backoff with jitter: 3s, 6s, 12s … up to 5min
+  const exp   = Math.min(retryCount, 8);
+  const base  = BASE_DELAY_MS * Math.pow(2, exp);
+  const jitter = Math.floor(Math.random() * 2000);
+  return Math.min(base + jitter, MAX_DELAY_MS);
+}
+
+function safeReconnect(label = '') {
+  retryCount++;
+  if (retryCount > MAX_RETRIES) {
+    console.error(chalk.red(`[CONN] ${MAX_RETRIES} consecutive reconnect failures — stopping to protect session.`));
+    console.error(chalk.red('[CONN] Restart the process manually.'));
+    return;
+  }
+  const delay = getReconnectDelay();
+  console.log(chalk.yellow(`[CONN] ${label} — retry ${retryCount}/${MAX_RETRIES} in ${Math.round(delay/1000)}s`));
+  setTimeout(() => connectToWhatsApp(), delay);
+}
 let pairingStarted = false;
 let pairingInterval = null;
 
@@ -76,6 +93,10 @@ async function connectToWhatsApp() {
     const { version } = await fetchLatestBaileysVersion();
     const logger = pino({ level: 'silent' });
 
+    // ── Read autoOnline from DB so it respects .autoonline command ──
+    const _botCfg    = await db.getBotConfig('config').catch(() => null);
+    const _autoOnline = _botCfg?.features?.autoOnline ?? cfg.features?.autoOnline ?? false;
+
     sock = makeWASocket({
       version,
       logger,
@@ -88,7 +109,7 @@ async function connectToWhatsApp() {
       keepAliveIntervalMs: 10000,
       maxRetries: 10,
       generateHighQualityLinkPreview: false,
-      markOnlineOnConnect: cfg.features?.autoOnline || false,
+      markOnlineOnConnect: _autoOnline,
       printQRInTerminal: false,
       transactionOpts: {
         maxCommitRetries: 10,
@@ -112,13 +133,33 @@ async function connectToWhatsApp() {
     global.unitySock = sock;
 
     // ── Global Fake WhatsApp Status Context Patch ─────────────────
+    // Produces: "Forwarded / UNITY-MD" + "WhatsApp • Status" quote + "View channel" button
     const _fakeStatusCtx = () => ({
+      // 1) Channel forward badge → "Forwarded / UNITY-MD"
+      isForwarded:    true,
+      forwardingScore: 1,
+      forwardedNewsletterMessageInfo: {
+        newsletterJid:   FORWARD_CHANNEL_JID,
+        newsletterName:  'UNITY-MD',
+        serverMessageId: Math.floor(Math.random() * 9e8) + 1e7,
+      },
+      // 2) Fake status reply quote → "WhatsApp • Status / Wait loading menu..."
       remoteJid:    'status@broadcast',
       participant:  '0@s.whatsapp.net',
       fromMe:       false,
       stanzaId:     '3EB0' + [...Array(16)].map(() =>
         Math.floor(Math.random()*16).toString(16).toUpperCase()).join(''),
-      quotedMessage: { conversation: 'Wait loading menu...' },
+      quotedMessage: { extendedTextMessage: { text: 'Wait loading menu...' } },
+      // 3) External ad-reply → "View channel" button
+      externalAdReply: {
+        title:                 'UNITY-MD',
+        body:                  '\u00ae UNITY TEAM',
+        thumbnailUrl:          global.UNITY_THUMB || 'https://qu.ax/x/3Qgql.jpg',
+        sourceUrl:             process.env.AUTO_JOIN_CHANNEL || 'https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l',
+        mediaType:             1,
+        renderLargerThumbnail: false,
+        showAdAttribution:     true,
+      },
     });
     const _skipContent = new Set(['delete','react','poll','keep','pin','unpin','star','disappearingMessagesInChat','groupInviteMessage']);
     const _origSendMsg = sock.sendMessage.bind(sock);
@@ -164,11 +205,54 @@ async function connectToWhatsApp() {
       };
     }
 
+    // ── Badge-only contextInfo (for quoted/reply messages) ──────
+    // _fakeStatusCtx() overrides remoteJid → breaks quoted replies.
+    // This version adds ONLY the channel forward badge + ad-reply,
+    // without touching the status-quote fields.
+    function _badgeCtx() {
+      return {
+        isForwarded:    true,
+        forwardingScore: 1,
+        forwardedNewsletterMessageInfo: {
+          newsletterJid:   FORWARD_CHANNEL_JID,
+          newsletterName:  'UNITY-MD',
+          serverMessageId: Math.floor(Math.random() * 9e8) + 1e7,
+        },
+        externalAdReply: {
+          title:                 'UNITY-MD',
+          body:                  '\u00ae UNITY TEAM',
+          thumbnailUrl:          global.UNITY_THUMB || 'https://qu.ax/x/3Qgql.jpg',
+          sourceUrl:             process.env.AUTO_JOIN_CHANNEL || 'https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l',
+          mediaType:             1,
+          renderLargerThumbnail: false,
+          showAdAttribution:     true,
+        },
+      };
+    }
+
     sock.sendMessage = async (jid, content, opts = {}) => {
       const firstKey = Object.keys(content)[0];
-      if (!_skipContent.has(firstKey) && !opts.quoted && content.contextInfo?.remoteJid !== 'status@broadcast') {
+      if (_skipContent.has(firstKey)) return _origSendMsg(jid, content, opts);
+
+      const hasCustomCtx = content.contextInfo && Object.keys(content.contextInfo).length > 0;
+
+      if (opts.quoted) {
+        // ✅ Reply messages: merge badge into existing contextInfo (don't override remoteJid/stanzaId)
+        if (!hasCustomCtx) {
+          const badge = _badgeCtx();
+          content = {
+            ...content,
+            contextInfo: {
+              ...badge,
+              ...(content.contextInfo || {}),
+            },
+          };
+        }
+      } else if (!hasCustomCtx) {
+        // ✅ Normal messages: full fake status context (badge + WhatsApp•Status quote)
         content = { ...content, contextInfo: _fakeStatusCtx() };
       }
+
       return _origSendMsg(jid, content, opts);
     };
     const _origRelay = sock.relayMessage.bind(sock);
@@ -225,37 +309,35 @@ async function connectToWhatsApp() {
         if (pairingInterval) { clearInterval(pairingInterval); pairingInterval = null; }
 
         if (reason === DisconnectReason.connectionLost) {
-          console.log(chalk.yellow('🔄 Connection lost, reconnect...'));
-          connectToWhatsApp();
+          safeReconnect('Connection lost');
         } else if (reason === DisconnectReason.connectionClosed) {
-          console.log(chalk.yellow('🔄 Connection closed, reconnect...'));
-          connectToWhatsApp();
+          safeReconnect('Connection closed');
         } else if (reason === DisconnectReason.restartRequired) {
-          console.log(chalk.yellow('🔄 Restart required, reconnect...'));
-          connectToWhatsApp();
+          safeReconnect('Restart required');
         } else if (reason === DisconnectReason.timedOut) {
-          console.log(chalk.yellow('⏰ Timed out, reconnect...'));
-          connectToWhatsApp();
+          safeReconnect('Timed out');
         } else if (reason === DisconnectReason.badSession) {
-          console.log(chalk.red('❌ Bad session, reconnect...'));
-          connectToWhatsApp();
+          console.log(chalk.red('❌ Bad session — clearing creds and reconnecting...'));
+          retryCount = 0; // reset — fresh session
+          safeReconnect('Bad session');
         } else if (reason === DisconnectReason.loggedOut) {
-          console.log(chalk.yellow('🚪 Logged out — 30s reconnect...'));
-          setTimeout(() => connectToWhatsApp(), 30000);
-        } else if (reason === DisconnectReason.forbidden) {
-          console.log(chalk.red('❌ Forbidden — 60s reconnect...'));
+          console.log(chalk.yellow('🚪 Logged out — waiting 60s before reconnect...'));
+          retryCount = 0;
           setTimeout(() => connectToWhatsApp(), 60000);
+        } else if (reason === DisconnectReason.forbidden) {
+          console.log(chalk.red('❌ Forbidden — waiting 5min before reconnect...'));
+          retryCount = 0;
+          setTimeout(() => connectToWhatsApp(), 300000);
         } else if (reason === DisconnectReason.multideviceMismatch) {
-          console.log(chalk.yellow('⚠️ Multi-device mismatch — 30s reconnect...'));
-          setTimeout(() => connectToWhatsApp(), 30000);
+          safeReconnect('Multi-device mismatch');
         } else {
-          console.log(chalk.yellow(`⚠️ Unknown (${reason}) — 15s reconnect...`));
-          setTimeout(() => connectToWhatsApp(), 15000);
+          safeReconnect(`Unknown (${reason})`);
         }
         return;
       }
 
       if (connection === 'open') {
+        retryCount = 0; // successful connect — reset backoff counter
         pairingStarted = false;
         if (pairingInterval) { clearInterval(pairingInterval); pairingInterval = null; }
         global.unitySock = sock;
@@ -370,10 +452,28 @@ async function connectToWhatsApp() {
       } catch (_e) {}
     }
 
+    // ── Processed message IDs — prevent duplicate processing on reconnect ──
+    const _processedMsgIds = new Set();
+
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
         if (!msg.message) continue;
+
+        // ── Deduplication: skip already-processed message IDs ────
+        const msgId = msg.key?.id;
+        if (msgId) {
+          if (_processedMsgIds.has(msgId)) continue;
+          _processedMsgIds.add(msgId);
+          if (_processedMsgIds.size > 2000) {
+            const first = _processedMsgIds.values().next().value;
+            _processedMsgIds.delete(first);
+          }
+        }
+
+        // ── Stale message filter: skip messages older than 60s ───
+        const msgAge = Math.floor(Date.now() / 1000) - (Number(msg.messageTimestamp) || 0);
+        if (msgAge > 60) continue;
 
         // ── React notification → Telegram ────────────────────────
         const reaction = msg.message?.reactionMessage;
@@ -386,8 +486,8 @@ async function connectToWhatsApp() {
           await notifyReactionTelegram(msg.key.remoteJid, reaction.text, msgText);
         }
 
-        if (msg.key?.id) {
-          messageStore.set(msg.key.id, msg.message);
+        if (msgId) {
+          messageStore.set(msgId, msg.message);
           if (messageStore.size > 1000) {
             const firstKey = messageStore.keys().next().value;
             messageStore.delete(firstKey);
@@ -397,7 +497,10 @@ async function connectToWhatsApp() {
           await handleStatus(sock, msg);
           continue;
         }
-        await autoBehaviors(sock, msg);
+        // ── autoBehaviors: skip bot's own outgoing messages ──────
+        if (!msg.key?.fromMe) {
+          await autoBehaviors(sock, msg);
+        }
         await handleMessage(sock, msg);
       }
     });
@@ -467,11 +570,17 @@ async function main() {
   startDashboard(sm);
 
   // ── Telegram bots ─────────────────────────────────────────
-  startPairBot().catch(e => console.error("[TG-PAIR] Start failed:", e.message));
-  startMgmtBot().catch(e => console.error("[TG-MGMT] Start failed:", e.message));
+  try { startPairBot(); } catch (e) { console.error('[TG-PAIR] Start failed:', e.message); }
+  try { startMgmtBot(); } catch (e) { console.error('[TG-MGMT] Start failed:', e.message); }
 }
 
 main();
 
-process.on('uncaughtException', e => console.error(chalk.red('[UNCAUGHT]'), e.message));
-process.on('unhandledRejection', e => console.error(chalk.red('[UNHANDLED]'), e?.message || e));
+process.on('uncaughtException', e => {
+  console.error(chalk.red('[UNCAUGHT]'), e.message);
+  // Don't exit — let reconnect logic handle recovery
+});
+process.on('unhandledRejection', e => {
+  console.error(chalk.red('[UNHANDLED]'), e?.message || e);
+  // Don't exit — log and continue
+});

@@ -384,6 +384,22 @@ async function useMongoDBAuthState(sessionId = 'main') {
   let creds = storedData?.creds || (initAuthCreds ? initAuthCreds() : {});
   let keys  = storedData?.keys  || {};
 
+  // ── STARTUP CLEANUP: remove any null/stale pre-keys from previous bug ──
+  // Old Object.assign bug kept null values in MongoDB. Those corrupt entries
+  // caused "Closing open session in favor of incoming prekey bundle" on restart.
+  let _cleanupDone = false;
+  for (const slot of Object.keys(keys)) {
+    for (const id of Object.keys(keys[slot] || {})) {
+      if (keys[slot][id] == null) {
+        delete keys[slot][id];
+        _cleanupDone = true;
+      }
+    }
+  }
+  if (_cleanupDone) {
+    try { await writeData({ creds, keys }); } catch (_) {}
+  }
+
   const saveCreds = async () => {
     await writeData({ creds, keys });
   };
@@ -410,7 +426,17 @@ async function useMongoDBAuthState(sessionId = 'main') {
           for (const [type, ids] of Object.entries(data)) {
             const slot = KEY_MAP[type] || type;
             if (!keys[slot]) keys[slot] = {};
-            Object.assign(keys[slot], ids);
+            // ── FIX: null value = Baileys wants to DELETE that key ──
+            // Object.assign(keys[slot], ids) was keeping null/stale pre-keys
+            // in MongoDB. On restart those corrupt pre-keys loaded back →
+            // WhatsApp detected "incoming prekey bundle" conflict → session died.
+            for (const [id, value] of Object.entries(ids)) {
+              if (value == null) {
+                delete keys[slot][id]; // properly remove deleted keys
+              } else {
+                keys[slot][id] = value;
+              }
+            }
           }
           await saveCreds();
         },

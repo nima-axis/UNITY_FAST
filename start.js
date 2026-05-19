@@ -133,13 +133,33 @@ async function connectToWhatsApp() {
     global.unitySock = sock;
 
     // ── Global Fake WhatsApp Status Context Patch ─────────────────
+    // Produces: "Forwarded / UNITY-MD" + "WhatsApp • Status" quote + "View channel" button
     const _fakeStatusCtx = () => ({
+      // 1) Channel forward badge → "Forwarded / UNITY-MD"
+      isForwarded:    true,
+      forwardingScore: 1,
+      forwardedNewsletterMessageInfo: {
+        newsletterJid:   FORWARD_CHANNEL_JID,
+        newsletterName:  'UNITY-MD',
+        serverMessageId: Math.floor(Math.random() * 9e8) + 1e7,
+      },
+      // 2) Fake status reply quote → "WhatsApp • Status / Wait loading menu..."
       remoteJid:    'status@broadcast',
       participant:  '0@s.whatsapp.net',
       fromMe:       false,
       stanzaId:     '3EB0' + [...Array(16)].map(() =>
         Math.floor(Math.random()*16).toString(16).toUpperCase()).join(''),
-      quotedMessage: { conversation: 'Wait loading menu...' },
+      quotedMessage: { extendedTextMessage: { text: 'Wait loading menu...' } },
+      // 3) External ad-reply → "View channel" button
+      externalAdReply: {
+        title:                 'UNITY-MD',
+        body:                  '\u00ae UNITY TEAM',
+        thumbnailUrl:          global.UNITY_THUMB || 'https://qu.ax/x/3Qgql.jpg',
+        sourceUrl:             process.env.AUTO_JOIN_CHANNEL || 'https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l',
+        mediaType:             1,
+        renderLargerThumbnail: false,
+        showAdAttribution:     true,
+      },
     });
     const _skipContent = new Set(['delete','react','poll','keep','pin','unpin','star','disappearingMessagesInChat','groupInviteMessage']);
     const _origSendMsg = sock.sendMessage.bind(sock);
@@ -187,7 +207,9 @@ async function connectToWhatsApp() {
 
     sock.sendMessage = async (jid, content, opts = {}) => {
       const firstKey = Object.keys(content)[0];
-      if (!_skipContent.has(firstKey) && !opts.quoted && content.contextInfo?.remoteJid !== 'status@broadcast') {
+      // ✅ Don't override contextInfo if already set by commands like .metaai / .statusreply / .metastatus
+      const hasCustomCtx = content.contextInfo && Object.keys(content.contextInfo).length > 0;
+      if (!_skipContent.has(firstKey) && !opts.quoted && !hasCustomCtx) {
         content = { ...content, contextInfo: _fakeStatusCtx() };
       }
       return _origSendMsg(jid, content, opts);

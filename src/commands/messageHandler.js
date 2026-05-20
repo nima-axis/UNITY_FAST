@@ -314,6 +314,7 @@ async function handleMessage(sock, msg) {
       } catch {}
 
       // ── Prefix-less save/send — inject BEFORE autoAiReply ────────
+      // Supports: save, SAVE, Save, send, SEND, Send (any case, with/without prefix)
       const _sl = (m.body || '').trim().toLowerCase();
       const _isSaveCmd = _sl === 'save' || _sl.startsWith('save ') ||
                          _sl === 'send' || _sl.startsWith('send ');

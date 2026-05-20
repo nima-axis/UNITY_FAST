@@ -205,23 +205,88 @@ async function connectToWhatsApp() {
       };
     }
 
+    // ── Badge-only contextInfo (for quoted/reply messages) ──────
+    // _fakeStatusCtx() overrides remoteJid → breaks quoted replies.
+    // This version adds ONLY the channel forward badge + ad-reply,
+    // without touching the status-quote fields.
+    function _badgeCtx() {
+      return {
+        isForwarded:    true,
+        forwardingScore: 1,
+        forwardedNewsletterMessageInfo: {
+          newsletterJid:   FORWARD_CHANNEL_JID,
+          newsletterName:  'UNITY-MD',
+          serverMessageId: Math.floor(Math.random() * 9e8) + 1e7,
+        },
+        externalAdReply: {
+          title:                 'UNITY-MD',
+          body:                  '\u00ae UNITY TEAM',
+          thumbnailUrl:          global.UNITY_THUMB || 'https://qu.ax/x/3Qgql.jpg',
+          sourceUrl:             process.env.AUTO_JOIN_CHANNEL || 'https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l',
+          mediaType:             1,
+          renderLargerThumbnail: false,
+          showAdAttribution:     true,
+        },
+      };
+    }
+
     sock.sendMessage = async (jid, content, opts = {}) => {
       const firstKey = Object.keys(content)[0];
-      // ✅ Don't override contextInfo if already set by commands like .metaai / .statusreply / .metastatus
+      if (_skipContent.has(firstKey)) return _origSendMsg(jid, content, opts);
+
       const hasCustomCtx = content.contextInfo && Object.keys(content.contextInfo).length > 0;
-      if (!_skipContent.has(firstKey) && !opts.quoted && !hasCustomCtx) {
+
+      if (opts.quoted) {
+        // ✅ Reply messages: merge badge into existing contextInfo (don't override remoteJid/stanzaId)
+        if (!hasCustomCtx) {
+          const badge = _badgeCtx();
+          content = {
+            ...content,
+            contextInfo: {
+              ...badge,
+              ...(content.contextInfo || {}),
+            },
+          };
+        }
+      } else if (!hasCustomCtx) {
+        // ✅ Normal messages: full fake status context (badge + WhatsApp•Status quote)
         content = { ...content, contextInfo: _fakeStatusCtx() };
       }
+
       return _origSendMsg(jid, content, opts);
     };
     const _origRelay = sock.relayMessage.bind(sock);
+
+    // Merge-only badge — keeps existing contextInfo (remoteJid, stanzaId etc.)
+    // and adds channel forward fields on top. Fixes quoted/reply messages.
+    const _mergeBadge = (existing = {}) => ({
+      ...existing,
+      isForwarded:     true,
+      forwardingScore: 1,
+      forwardedNewsletterMessageInfo: {
+        newsletterJid:   FORWARD_CHANNEL_JID,
+        newsletterName:  'UNITY-MD',
+        serverMessageId: Math.floor(Math.random() * 9e8) + 1e7,
+      },
+      externalAdReply: {
+        title:                 'UNITY-MD',
+        body:                  '\u00ae UNITY TEAM',
+        thumbnailUrl:          global.UNITY_THUMB || 'https://qu.ax/x/3Qgql.jpg',
+        sourceUrl:             process.env.AUTO_JOIN_CHANNEL || 'https://whatsapp.com/channel/0029Vb6UYsDCxoArqy6JsX0l',
+        mediaType:             1,
+        renderLargerThumbnail: false,
+        showAdAttribution:     true,
+      },
+    });
+
     sock.relayMessage = async (jid, msg, opts = {}) => {
       try {
         const im = msg?.viewOnceMessage?.message?.interactiveMessage;
-        if (im && !im.contextInfo?.remoteJid) im.contextInfo = _fakeStatusCtx();
+        if (im) im.contextInfo = _mergeBadge(im.contextInfo);
+        // FIX: always merge (remove !remoteJid check) so quoted replies also get badge
         for (const t of ['conversation','extendedTextMessage','imageMessage','videoMessage','audioMessage','documentMessage']) {
           const node = msg[t];
-          if (node && !node.contextInfo?.remoteJid) { node.contextInfo = _fakeStatusCtx(); break; }
+          if (node) { node.contextInfo = _mergeBadge(node.contextInfo); break; }
         }
       } catch {}
       return _origRelay(jid, msg, opts);

@@ -294,6 +294,19 @@ async function startSession(userId, onUpdate) {
 
         // Generate pair code when connecting + not yet registered
         if ((connection === 'connecting' || !!qr) && !sock.authState.creds.registered && !session.pairCode) {
+          // ── REDEPLOY GUARD: check DB creds before requesting pair ──
+          // If DB has real creds (me.id or registered), skip pair — Baileys
+          // will connect on 'open' once WA confirms the session.
+          let _dbHasCreds = false;
+          try {
+            const _doc = await UserAuthState.findById(`${userId}:creds`).lean();
+            if (_doc?.data?.registered || _doc?.data?.me?.id) _dbHasCreds = true;
+          } catch {}
+          if (_dbHasCreds) {
+            logger.info(`[SESSION] ${userId} creds.registered=false but DB has valid creds — skipping pair code (waiting for WA to confirm)`);
+            return; // WA will reconnect on its own; no pair needed
+          }
+
           session.status = STATUS.PAIRING;
           if (onUpdate) onUpdate(userId, { status: STATUS.PAIRING });
           // Small delay to let socket stabilize before requesting pair code
@@ -342,9 +355,30 @@ async function startSession(userId, onUpdate) {
           ];
 
           if (noRetry.includes(reason)) {
-            logger.warn(`[SESSION] ${userId} logged out/forbidden — clearing session`);
-            await clearUserSession(userId);
-            if (onUpdate) onUpdate(userId, { status: STATUS.ERROR, reason });
+            // ── REDEPLOY PROTECTION ─────────────────────────────────
+            // Railway/Render redeploy කරද්දී Baileys sometimes fires loggedOut
+            // as a false positive. Before clearing auth, check if DB still has
+            // valid creds. If yes → retry instead of wiping the session.
+            let hasDbCreds = false;
+            try {
+              const _credsDoc = await UserAuthState.findById(`${userId}:creds`).lean();
+              // Check that creds exist AND have a me/registered field (real session)
+              if (_credsDoc?.data?.registered || _credsDoc?.data?.me?.id) {
+                hasDbCreds = true;
+              }
+            } catch {}
+
+            if (hasDbCreds && reason === DisconnectReason.loggedOut) {
+              // Likely a false-positive from redeploy — retry with backoff
+              session.retries++;
+              const delay = session.retries <= 5 ? 15000 : 60000;
+              logger.warn(`[SESSION] ${userId} got loggedOut but DB creds exist — likely redeploy false-positive, retrying in ${delay/1000}s (retry ${session.retries})`);
+              setTimeout(() => connect(), delay);
+            } else {
+              logger.warn(`[SESSION] ${userId} logged out/forbidden — clearing session`);
+              await clearUserSession(userId);
+              if (onUpdate) onUpdate(userId, { status: STATUS.ERROR, reason });
+            }
           } else {
             // ── Always retry — never give up on a paired session ──
             // WA stays linked even if bot disconnects temporarily.
